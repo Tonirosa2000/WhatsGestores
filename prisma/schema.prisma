@@ -1,0 +1,98 @@
+// Prisma Schema - WhatsGestores
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. Vagas de Emprego
+model JobOpportunity {
+  id              String   @id @default(uuid())
+  messageId       String   @unique
+  groupName       String   // Nome do grupo de origem
+  title           String   // Ex: "Assistente Administrativo"
+  company         String?  // Ex: "Clínica Médica" ou "Confidencial"
+  description     String   // Descrição completa das atividades e requisitos
+  modality        String   @default("Presencial") // "Presencial", "Remoto", "Híbrido"
+  location        String?  // Ex: "São Paulo - SP"
+  salary          Float?   // Valor numérico para filtros e ordenação
+  salaryFormatted String?  // Ex: "R$ 2.400,00" ou "A combinar"
+  benefits        String?  // Ex: "VT + VR + Convênio"
+  requirements    String?  // Requisitos em formato JSON string ou texto
+  contactName     String?  // Nome do contato/recrutador
+  contactPhone    String?  // Telefone / WhatsApp para contato direto
+  contactEmail    String?  // E-mail de candidatura
+  applyUrl        String?  // Link externo se houver
+  originalMessage String   // Mensagem original na íntegra
+  publishedAt     DateTime // Data da mensagem no WhatsApp
+  expiresAt       DateTime? // Data limite / validade para inscrição
+  status          String   @default("ACTIVE") // ACTIVE, EXPIRED, FILLED, ARCHIVED
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// 2. Banco de Talentos / Currículos
+model CandidateProfile {
+  id                String   @id @default(uuid())
+  messageId         String   @unique
+  groupName         String
+  fullName          String   // Nome do candidato
+  targetRole        String   // Cargo pretendido / Área de atuação
+  experienceSummary String   // Resumo de experiências
+  skills            String?  // Habilidades identificadas (JSON string ou separado por vírgula)
+  location          String?  // Cidade / Estado
+  contactPhone      String   // Telefone WhatsApp (visível só para membros)
+  contactEmail      String?  // E-mail
+  attachmentUrl     String?  // Link do PDF/arquivo se houver
+  originalMessage   String   // Mensagem original
+  publishedAt       DateTime // Data da publicação
+  status            String   @default("ACTIVE")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// 3. Membros Verificados dos Grupos do WhatsApp
+model GroupMember {
+  id           String   @id @default(uuid())
+  phone        String   @unique // Ex: "5511999998888"
+  name         String?  // Nome do participante no WhatsApp
+  groupName    String   // Grupo em que participa
+  isAuthorized Boolean  @default(true)
+  lastSeenAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// 4. Códigos de Acesso OTP (Login com WhatsApp para Membros)
+model AuthOtp {
+  id        String   @id @default(uuid())
+  phone     String
+  code      String   // Código de 6 dígitos
+  expiresAt DateTime // Expira em 10 minutos
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// 5. Sessão e Status do WhatsApp na Nuvem
+model WhatsAppSession {
+  id             String   @id @default("primary")
+  status         String   @default("DISCONNECTED") // CONNECTED, QR_READY, DISCONNECTED
+  qrCodeData     String?  // String / base64 do QR Code para exibição
+  phoneConnected String?  // Número do WhatsApp conectado
+  lastActiveAt   DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// 6. Logs de Sincronização e Auditoria
+model SyncLog {
+  id          String   @id @default(uuid())
+  groupName   String
+  messageType String   // "JOB", "CANDIDATE", "MEMBER_SYNC", "IGNORED"
+  summary     String
+  success     Boolean  @default(true)
+  errorMessage String?
+  createdAt   DateTime @default(now())
+}

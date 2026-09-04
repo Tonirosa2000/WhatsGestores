@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # 1. WhatsGestores - Aplicação Web Next.js + IA Gemini
+  whatsgestores-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsgestores-app
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=file:/app/prisma/dev.db
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      - EVOLUTION_API_URL=http://evolution-api:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-whatsgestores_secret_key}
+    volumes:
+      - ./prisma:/app/prisma
+      - ./uploads:/app/public/uploads
+    depends_on:
+      - evolution-api
+    networks:
+      - whatsgestores-net
+
+  # 2. Robô WhatsApp - Evolution API v2 (Conexão 24/7 com grupos)
+  evolution-api:
+    image: atendai/evolution-api:v2.1.2
+    container_name: evolution-api
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_PORT=8080
+      - SERVER_URL=${EVOLUTION_PUBLIC_URL:-http://179.199.143.195:8080}
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-whatsgestores_secret_key}
+      - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
+      - REDIS_ENABLED=true
+      - REDIS_URI=redis://redis:6379
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://redis:6379
+      - WEBHOOK_GLOBAL_ENABLED=true
+      - WEBHOOK_GLOBAL_URL=http://whatsgestores-app:3000/api/whatsapp/webhook
+      - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=true
+      - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
+      - WEBHOOK_EVENTS_QRCODE_UPDATED=true
+      - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
+      - WEBHOOK_GLOBAL_BASE64=true
+    volumes:
+      - evolution_instances:/evolution/instances
+      - evolution_store:/evolution/store
+    depends_on:
+      - redis
+    networks:
+      - whatsgestores-net
+
+  # 3. Cache Redis para controle de sessões e filas
+  redis:
+    image: redis:7-alpine
+    container_name: whatsgestores-redis
+    restart: always
+    volumes:
+      - redis_data:/data
+    networks:
+      - whatsgestores-net
+
+volumes:
+  evolution_instances:
+  evolution_store:
+  redis_data:
+
+networks:
+  whatsgestores-net:
+    driver: bridge
