@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Bot, QrCode, CheckCircle2, RefreshCw, Smartphone, Database, Sparkles, MessageSquare, Trash2 } from 'lucide-react';
+import { Bot, QrCode, CheckCircle2, RefreshCw, Smartphone, Database, Sparkles, MessageSquare, Trash2, History } from 'lucide-react';
 import { formatDateTime } from '@/lib/formatters';
+import { ImportHistoryModal } from './ImportHistoryModal';
 
 interface AdminPanelProps {
   onOpenSimulatorModal: () => void;
@@ -14,6 +15,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
 
   const fetchStatus = async () => {
     setLoading(true);
@@ -103,6 +105,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
               title="Atualizar status"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              onClick={() => setIsHistoryModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl shadow-md transition-all"
+              title="Buscar mensagens antigas do grupo"
+            >
+              <History className="w-4 h-4" />
+              <span>Importar Histórico</span>
             </button>
             <button
               onClick={onOpenSimulatorModal}
@@ -315,6 +325,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
           </table>
         </div>
       </div>
+
+      <ImportHistoryModal
+        isOpen={isHistoryModalOpen}
+        onClose={() => setIsHistoryModalOpen(false)}
+        onSuccess={fetchStatus}
+      />
     </div>
   );
 };
