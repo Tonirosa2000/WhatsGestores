@@ -223,10 +223,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
             </p>
 
             {qrCode ? (
-              <div className="flex flex-col items-center justify-center p-4 bg-white rounded-2xl border border-slate-200 mb-4">
-                <img src={qrCode} alt="WhatsApp QR Code" className="w-52 h-52 rounded-xl shadow-inner mb-3" />
-                <span className="text-xs text-slate-500 font-medium animate-pulse">
-                  Aguardando leitura pelo aplicativo do WhatsApp...
+              <div className="flex flex-col items-center justify-center p-6 bg-white rounded-3xl border border-slate-200 shadow-sm mb-4">
+                <div className="p-3 bg-white rounded-2xl border-2 border-slate-900/10 shadow-md mb-3">
+                  <img src={qrCode} alt="WhatsApp QR Code" className="w-64 h-64 sm:w-72 sm:h-72 object-contain" />
+                </div>
+                <span className="text-xs text-slate-700 font-semibold animate-pulse flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  Aponte a câmera do WhatsApp (Aparelhos Conectados)...
                 </span>
               </div>
             ) : (

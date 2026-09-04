@@ -20,9 +20,10 @@ export async function POST() {
           qrCodeBase64 = connectData.base64;
         } else if (connectData?.code) {
           qrCodeBase64 = await QRCode.toDataURL(connectData.code, {
-            margin: 2,
-            width: 320,
-            color: { dark: '#128C7E', light: '#FFFFFF' }
+            margin: 3,
+            width: 360,
+            errorCorrectionLevel: 'M',
+            color: { dark: '#000000', light: '#FFFFFF' }
           });
         }
       }
@@ -51,9 +52,10 @@ export async function POST() {
             qrCodeBase64 = createData.qrcode.base64;
           } else if (createData?.qrcode?.code) {
             qrCodeBase64 = await QRCode.toDataURL(createData.qrcode.code, {
-              margin: 2,
-              width: 320,
-              color: { dark: '#128C7E', light: '#FFFFFF' }
+              margin: 3,
+              width: 360,
+              errorCorrectionLevel: 'M',
+              color: { dark: '#000000', light: '#FFFFFF' }
             });
           }
         }
@@ -62,13 +64,14 @@ export async function POST() {
       }
     }
 
-    // 3. QR Code Garantido (Fallback dinâmico)
+    // 3. QR Code Garantido em Preto Puro de Alto Contraste
     if (!qrCodeBase64) {
       const rawQrValue = '2@' + Buffer.from('whatsgestores_session_' + Date.now()).toString('base64') + ',xyz,auth';
       qrCodeBase64 = await QRCode.toDataURL(rawQrValue, {
-        margin: 2,
-        width: 320,
-        color: { dark: '#128C7E', light: '#FFFFFF' }
+        margin: 3,
+        width: 360,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#000000', light: '#FFFFFF' }
       });
     }
 
