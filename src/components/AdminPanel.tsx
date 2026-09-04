@@ -79,13 +79,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
     }
   };
 
+  const [clearingMembers, setClearingMembers] = useState(false);
+
   const handleSyncMembers = async () => {
     setSyncingMembers(true);
     try {
       const res = await fetch('/api/whatsapp/sync-members', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        alert(`✓ Sucesso! ${data.membersSynced} participantes sincronizados de ${data.groupsCount} grupos.`);
+        const details = data.groupStats 
+          ? Object.entries(data.groupStats).map(([k, v]) => `• ${k}: ${v} membros`).join('\n')
+          : '';
+        alert(`✓ Sucesso! ${data.membersSynced} participantes sincronizados exclusivamente dos grupos oficiais:\n\n${details}`);
         fetchStatus();
       } else {
         alert('Erro ao sincronizar membros: ' + data.error);
@@ -94,6 +99,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
       alert('Erro na requisição: ' + e.message);
     } finally {
       setSyncingMembers(false);
+    }
+  };
+
+  const handleClearMembers = async () => {
+    const confirmed = window.confirm(
+      '⚠️ Tem certeza que deseja apagar todos os membros do WhatsApp cadastrados para reiniciar a sincronização limpa apenas dos 2 grupos oficiais?'
+    );
+    if (!confirmed) return;
+
+    setClearingMembers(true);
+    try {
+      const res = await fetch('/api/admin/clear-members', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert('✓ ' + data.message);
+        fetchStatus();
+      } else {
+        alert('Erro ao limpar membros: ' + data.error);
+      }
+    } catch (e: any) {
+      alert('Erro na requisição: ' + e.message);
+    } finally {
+      setClearingMembers(false);
     }
   };
 
@@ -127,17 +155,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
             </button>
             <button
               onClick={handleSyncMembers}
-              disabled={syncingMembers}
+              disabled={syncingMembers || clearingMembers}
               className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-md transition-all"
-              title="Buscar e sincronizar todos os participantes dos grupos de WhatsApp"
+              title="Buscar e sincronizar participantes exclusivamente dos 2 grupos oficiais"
             >
               <Users className={`w-4 h-4 ${syncingMembers ? 'animate-spin' : ''}`} />
-              <span>{syncingMembers ? 'Sincronizando...' : 'Sincronizar Membros'}</span>
+              <span>{syncingMembers ? 'Sincronizando...' : 'Sincronizar Membros Oficiais'}</span>
+            </button>
+            <button
+              onClick={handleClearMembers}
+              disabled={clearingMembers || syncingMembers}
+              className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold rounded-xl transition-all"
+              title="Apagar todos os membros cadastrados para re-sincronizar limpo"
+            >
+              <Users className="w-4 h-4 text-amber-700" />
+              <span>{clearingMembers ? 'Limpando...' : 'Limpar Membros'}</span>
             </button>
             <button
               onClick={() => setIsHistoryModalOpen(true)}
               className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl shadow-md transition-all"
-              title="Buscar mensagens antigas do grupo"
+              title="Buscar mensagens antigas do grupo oficial selecionado"
             >
               <History className="w-4 h-4" />
               <span>Importar Histórico</span>
@@ -233,7 +270,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
                   Grupo de Currículos
                 </span>
                 <h4 className="text-sm font-bold text-slate-900 mt-1">
-                  Gestores - Banco de Talentos - Currículos
+                  Gestores - Banco de Talentos - Currículo
                 </h4>
                 <p className="text-xs text-slate-500">Escutando apresentações e perfis</p>
               </div>

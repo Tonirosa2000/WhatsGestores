@@ -1,8 +1,17 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { extractDataWithGemini, FileAttachmentInput } from '@/lib/gemini';
+import {
+  matchOfficialGroup,
+  getOfficialGroupsFromEvolution,
+  OFFICIAL_GROUP_VAGAS_DEFAULT,
+  OFFICIAL_GROUP_CURRICULOS_DEFAULT,
+} from '@/lib/whatsappGroups';
 
 export async function POST(request: Request) {
+  const evolutionUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
+  const evolutionKey = process.env.EVOLUTION_API_KEY || 'whatsgestores_secret_key';
+
   try {
     const payload = await request.json();
     const event = payload?.event || payload?.type;
@@ -48,9 +57,51 @@ export async function POST(request: Request) {
 
       const remoteJid = msgData?.key?.remoteJid || '';
       const isGroup = remoteJid.endsWith('@g.us');
+
+      // Descarta sumariamente se NÃO for grupo (mensagens diretas/privadas)
+      if (!isGroup) {
+        return NextResponse.json({
+          success: true,
+          ignored: true,
+          reason: 'Mensagem individual descartada: o robô monitora apenas os grupos oficiais de Vagas e Currículos',
+        });
+      }
+
+      // =======================================================================
+      // FILTRO ESTRITO: Apenas os 2 Grupos Oficiais
+      // =======================================================================
+      const rawGroupName = msgData?.groupName || payload?.data?.groupName || '';
+      let officialMatch = matchOfficialGroup(rawGroupName);
+      let canonicalGroupName = officialMatch.canonicalName;
+      let groupType = officialMatch.type;
+
+      // Se o payload não trouxe o nome do grupo, valida pelo JID na Evolution API
+      if (!officialMatch.isOfficial) {
+        const officialGroups = await getOfficialGroupsFromEvolution(evolutionUrl, evolutionKey);
+        const foundByJid = officialGroups.find((g) => g.id === remoteJid);
+
+        if (foundByJid) {
+          officialMatch = {
+            isOfficial: true,
+            type: foundByJid.type,
+            canonicalName: foundByJid.canonicalName,
+          };
+          canonicalGroupName = foundByJid.canonicalName;
+          groupType = foundByJid.type;
+        }
+      }
+
+      // Se não for nenhum dos 2 grupos oficiais, descarta imediatamente sem consumir IA
+      if (!officialMatch.isOfficial || !canonicalGroupName || !groupType) {
+        return NextResponse.json({
+          success: true,
+          ignored: true,
+          reason: `Grupo não autorizado ignorado (${rawGroupName || remoteJid}). Apenas os 2 grupos oficiais são monitorados.`,
+        });
+      }
+
       const senderPhone = (msgData?.key?.participant || remoteJid).replace(/\D/g, '');
       const senderName = msgData?.pushName || 'Participante';
-      const groupName = msgData?.groupName || (isGroup ? 'Grupo de Vagas e Currículos' : 'Mensagem Direta');
 
       // Extração de texto de diferentes tipos de mensagem
       const messageContent = msgData?.message;
@@ -85,7 +136,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, ignored: true, reason: 'Sem texto legível ou anexo' });
       }
 
-      const groupHint = groupName.toLowerCase().includes('curr') ? 'CURRICULOS' : 'VAGAS';
+      const groupHint = groupType === 'CURRICULOS' ? 'CURRICULOS' : 'VAGAS';
 
       // 3. Processamento pela Inteligência Artificial do Gemini
       const extracted = await extractDataWithGemini(
@@ -114,7 +165,7 @@ export async function POST(request: Request) {
           where: { messageId },
           create: {
             messageId,
-            groupName,
+            groupName: canonicalGroupName,
             title: extracted.title,
             company: extracted.company || 'Confidencial',
             description: extracted.description,
@@ -142,9 +193,9 @@ export async function POST(request: Request) {
 
         await prisma.syncLog.create({
           data: {
-            groupName,
+            groupName: canonicalGroupName,
             messageType: 'JOB',
-            summary: `Nova vaga detectada no WhatsApp: ${extracted.title} (${extracted.company || 'Confidencial'})`,
+            summary: `Nova vaga detectada no grupo oficial "${canonicalGroupName}": ${extracted.title} (${extracted.company || 'Confidencial'})`,
             success: true,
           }
         });
@@ -158,7 +209,7 @@ export async function POST(request: Request) {
           where: { messageId },
           create: {
             messageId,
-            groupName,
+            groupName: canonicalGroupName,
             fullName: extracted.fullName || senderName || 'Candidato Disponível',
             targetRole: extracted.targetRole,
             experienceSummary: extracted.experienceSummary,
@@ -178,9 +229,9 @@ export async function POST(request: Request) {
 
         await prisma.syncLog.create({
           data: {
-            groupName,
+            groupName: canonicalGroupName,
             messageType: 'CANDIDATE',
-            summary: `Novo talento identificado no WhatsApp: ${extracted.fullName} - ${extracted.targetRole}`,
+            summary: `Novo talento identificado no grupo oficial "${canonicalGroupName}": ${extracted.fullName} - ${extracted.targetRole}`,
             success: true,
           }
         });
@@ -188,12 +239,12 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, type: 'CANDIDATE', id: candidate.id });
       }
 
-      // 6. Mensagens Ignoradas / Conversas Comuns
+      // 6. Mensagens Ignoradas / Conversas Comuns dentro do grupo oficial
       await prisma.syncLog.create({
         data: {
-          groupName,
+          groupName: canonicalGroupName,
           messageType: 'IGNORED',
-          summary: `Mensagem ignorada pela IA: ${extracted.reason}`,
+          summary: `Mensagem no grupo "${canonicalGroupName}" descartada pela IA: ${extracted.reason}`,
           success: true,
         }
       });

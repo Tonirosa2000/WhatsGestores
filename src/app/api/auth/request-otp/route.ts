@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import {
+  matchOfficialGroup,
+  OFFICIAL_GROUP_VAGAS_DEFAULT,
+  OFFICIAL_GROUP_CURRICULOS_DEFAULT,
+} from '@/lib/whatsappGroups';
 
 export async function POST(request: Request) {
   const evolutionUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
@@ -28,45 +33,64 @@ export async function POST(request: Request) {
       phoneVariants.push(cleaned.slice(2, 4) + '9' + cleaned.slice(4));
     }
 
-    // 1. Verifica no banco local de membros
+    // 1. Verifica no banco local de membros (APENAS se estiver associado a um grupo oficial)
     let member = await prisma.groupMember.findFirst({
       where: {
-        OR: phoneVariants.map((p) => ({ phone: p })),
+        AND: [
+          {
+            OR: phoneVariants.map((p) => ({ phone: p })),
+          },
+          {
+            OR: [
+              { groupName: OFFICIAL_GROUP_VAGAS_DEFAULT },
+              { groupName: OFFICIAL_GROUP_CURRICULOS_DEFAULT },
+              { groupName: 'Gestores - Banco de Talentos - Currículos' },
+            ],
+          },
+        ],
       },
     });
 
-    // 2. Se não achou no banco local, consulta os grupos em tempo real na Evolution API
+    // 2. Se não achou no banco local, consulta os grupos em tempo real na Evolution API (FILTRANDO APENAS OS OFICIAIS)
     if (!member) {
       try {
         const groupsRes = await fetch(`${evolutionUrl}/group/fetchAllGroups/whatsgestores?getParticipants=true`, {
           headers: { 'apikey': evolutionKey },
+          signal: AbortSignal.timeout(10000),
         });
 
         if (groupsRes.ok) {
           const groups = await groupsRes.json();
           if (Array.isArray(groups)) {
             for (const group of groups) {
-              const groupName = group?.subject || group?.name || 'Grupo de Gestores';
-              const participants = group?.participants || [];
+              const subject = group?.subject || group?.name || '';
+              const match = matchOfficialGroup(subject);
 
+              // IGNORA qualquer grupo que não seja um dos 2 oficiais
+              if (!match.isOfficial || !match.canonicalName) {
+                continue;
+              }
+
+              const participants = group?.participants || [];
               const found = participants.find((p: any) => {
                 const pPhone = (p?.id || p?.jid || '').replace(/@.*$/, '').replace(/\D/g, '');
                 return phoneVariants.some((v) => pPhone.endsWith(v) || v.endsWith(pPhone));
               });
 
               if (found) {
-                // Cadastra como membro verificado
+                // Cadastra como membro verificado do grupo oficial correspondente
                 member = await prisma.groupMember.upsert({
                   where: { phone: cleaned },
                   create: {
                     phone: cleaned,
                     name: found?.pushName || found?.name || null,
-                    groupName,
+                    groupName: match.canonicalName,
                     isAuthorized: true,
                     lastSeenAt: new Date(),
                   },
                   update: {
-                    groupName,
+                    groupName: match.canonicalName,
+                    name: found?.pushName || found?.name || undefined,
                     lastSeenAt: new Date(),
                   },
                 });
@@ -80,12 +104,12 @@ export async function POST(request: Request) {
       }
     }
 
-    // 3. Se ainda assim não for membro
+    // 3. Se não for membro de nenhum dos grupos oficiais
     if (!member) {
       return NextResponse.json({
         success: false,
         isMember: false,
-        message: 'Este número não foi localizado nos grupos oficiais de Gestores. Para visualizar o Banco de Talentos e currículos completos, ingresse no nosso grupo do WhatsApp!',
+        message: 'Este número não foi localizado nos grupos oficiais de Gestores (Vagas e Currículo). Para visualizar o Banco de Talentos e currículos completos, ingresse nos nossos grupos oficiais!',
         inviteGroupUrl: 'https://chat.whatsapp.com/exemplo-grupo-gestores',
       }, { status: 403 });
     }
@@ -123,7 +147,7 @@ export async function POST(request: Request) {
       data: {
         groupName: member.groupName,
         messageType: 'MEMBER_AUTH',
-        summary: `Código OTP enviado para ${member.name || cleaned} via WhatsApp.`,
+        summary: `Código OTP enviado para ${member.name || cleaned} via WhatsApp (${member.groupName}).`,
         success: true,
       },
     });

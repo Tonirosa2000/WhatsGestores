@@ -164,9 +164,9 @@ export const ImportHistoryModal: React.FC<ImportHistoryModalProps> = ({ isOpen, 
             </div>
           )}
 
-          {/* Seleção de Grupo */}
+          {/* Seleção de Grupo Oficial */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-700 uppercase">Grupo de Destino</label>
+            <label className="text-xs font-bold text-slate-700 uppercase">Grupo Oficial do WhatsApp</label>
             <select
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
@@ -174,11 +174,10 @@ export const ImportHistoryModal: React.FC<ImportHistoryModalProps> = ({ isOpen, 
               className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
               <option value="Gestores - Banco de Talentos - VAGAS">Gestores - Banco de Talentos - VAGAS</option>
-              <option value="Gestores - Banco de Talentos - Currículos">Gestores - Banco de Talentos - Currículos</option>
-              <option value="Grupo Geral de Vagas e Currículos">Grupo Geral de Vagas e Currículos</option>
+              <option value="Gestores - Banco de Talentos - Currículo">Gestores - Banco de Talentos - Currículo</option>
             </select>
             <p className="text-[11px] text-slate-400">
-              A IA classifica automaticamente se a mensagem é Vaga ou Currículo independente do grupo.
+              O robô busca e processa exclusivamente mensagens do grupo oficial selecionado.
             </p>
           </div>
 

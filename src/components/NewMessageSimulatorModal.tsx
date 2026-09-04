@@ -245,7 +245,7 @@ WhatsApp: (11) 98123-4567 | E-mail: marcos.p.ti@email.com`;
               className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
               <option value="Gestores - Banco de Talentos - VAGAS">Gestores - Banco de Talentos - VAGAS</option>
-              <option value="Gestores - Banco de Talentos - Currículos">Gestores - Banco de Talentos - Currículos</option>
+              <option value="Gestores - Banco de Talentos - Currículo">Gestores - Banco de Talentos - Currículo</option>
             </select>
           </div>
 
@@ -332,7 +332,7 @@ WhatsApp: (11) 98123-4567 | E-mail: marcos.p.ti@email.com`;
                   <button
                     type="button"
                     onClick={() => {
-                      setGroupName('Gestores - Banco de Talentos - Currículos');
+                      setGroupName('Gestores - Banco de Talentos - Currículo');
                       setRawMessage(exampleCurriculo);
                     }}
                     className="text-[11px] font-semibold text-teal-700 hover:underline"

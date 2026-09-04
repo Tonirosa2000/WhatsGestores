@@ -5,6 +5,7 @@ export async function POST() {
   try {
     await prisma.jobOpportunity.deleteMany({});
     await prisma.candidateProfile.deleteMany({});
+    await prisma.groupMember.deleteMany({});
     await prisma.syncLog.deleteMany({});
     await prisma.authOtp.deleteMany({});
 

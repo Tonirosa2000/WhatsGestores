@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { extractDataWithGemini } from '@/lib/gemini';
+import {
+  matchOfficialGroup,
+  getOfficialGroupsFromEvolution,
+  OFFICIAL_GROUP_VAGAS_DEFAULT,
+  OFFICIAL_GROUP_CURRICULOS_DEFAULT,
+} from '@/lib/whatsappGroups';
 
 interface ParsedMessage {
   messageId: string;
@@ -19,6 +25,18 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { type, fileContent, groupName, limit = 50, geminiApiKey } = body;
 
+    // 1. Validação estrita do Grupo Informado
+    const match = matchOfficialGroup(groupName || '');
+    if (!match.isOfficial || !match.canonicalName) {
+      return NextResponse.json({
+        success: false,
+        error: `O grupo selecionado não é válido. Escolha "${OFFICIAL_GROUP_VAGAS_DEFAULT}" ou "${OFFICIAL_GROUP_CURRICULOS_DEFAULT}".`,
+      }, { status: 400 });
+    }
+
+    const canonicalGroup = match.canonicalName;
+    const groupType = match.type;
+
     let rawMessages: ParsedMessage[] = [];
 
     // =========================================================================
@@ -29,7 +47,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: false, error: 'Conteúdo do arquivo não fornecido.' }, { status: 400 });
       }
 
-      rawMessages = parseWhatsAppExportedText(fileContent, groupName || 'Grupo WhatsApp');
+      rawMessages = parseWhatsAppExportedText(fileContent, canonicalGroup);
     } 
     // =========================================================================
     // 2. MODO API (Evolution API v2 na nuvem)
@@ -39,6 +57,24 @@ export async function POST(request: Request) {
       const evolutionKey = process.env.EVOLUTION_API_KEY || 'whatsgestores_secret_key';
 
       try {
+        // Localiza o JID do grupo oficial correspondente
+        const officialGroups = await getOfficialGroupsFromEvolution(evolutionUrl, evolutionKey);
+        const targetGroup = officialGroups.find(
+          (g) => g.canonicalName === canonicalGroup || g.type === groupType
+        );
+
+        const requestBody: any = {
+          limit: Number(limit) || 50,
+        };
+
+        if (targetGroup?.id) {
+          requestBody.where = {
+            key: {
+              remoteJid: targetGroup.id,
+            },
+          };
+        }
+
         // Busca mensagens históricas da instância
         const res = await fetch(`${evolutionUrl}/chat/findMessages/whatsgestores`, {
           method: 'POST',
@@ -46,9 +82,7 @@ export async function POST(request: Request) {
             'apikey': evolutionKey,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            limit: Number(limit) || 50,
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         if (res.ok) {
@@ -56,7 +90,14 @@ export async function POST(request: Request) {
           const messagesList = Array.isArray(data) ? data : data?.messages?.records || data?.records || [];
 
           rawMessages = messagesList
-            .filter((m: any) => !m?.key?.fromMe)
+            .filter((m: any) => {
+              if (m?.key?.fromMe) return false;
+              // Se tivermos o JID alvo, filtra estritamente
+              if (targetGroup?.id && m?.key?.remoteJid && m.key.remoteJid !== targetGroup.id) {
+                return false;
+              }
+              return true;
+            })
             .map((m: any) => {
               const content =
                 m?.message?.conversation ||
@@ -74,7 +115,7 @@ export async function POST(request: Request) {
                 senderPhone: m?.key?.participant?.replace(/\D/g, '') || undefined,
                 publishedAt: timestamp,
                 content: content.trim(),
-                groupName: groupName || m?.groupName || 'Grupo WhatsApp',
+                groupName: canonicalGroup,
               };
             })
             .filter((m: ParsedMessage) => m.content.length > 0);
@@ -87,7 +128,7 @@ export async function POST(request: Request) {
     if (rawMessages.length === 0) {
       return NextResponse.json({
         success: true,
-        message: 'Nenhuma mensagem relevante encontrada no lote informado.',
+        message: `Nenhuma mensagem relevante encontrada no lote do grupo "${canonicalGroup}".`,
         stats: { total: 0, jobsCreated: 0, candidatesCreated: 0, ignored: 0 },
       });
     }
@@ -147,7 +188,7 @@ export async function POST(request: Request) {
     // =========================================================================
     for (let i = 0; i < relevantMessages.length; i++) {
       const item = relevantMessages[i];
-      const hint = item.groupName.toLowerCase().includes('curr') ? 'CURRICULOS' : 'VAGAS';
+      const hint = groupType === 'CURRICULOS' ? 'CURRICULOS' : 'VAGAS';
 
       try {
         const extracted = await extractDataWithGemini(
@@ -172,7 +213,7 @@ export async function POST(request: Request) {
             where: { messageId: item.messageId },
             create: {
               messageId: item.messageId,
-              groupName: item.groupName,
+              groupName: canonicalGroup,
               title: extracted.title,
               company: extracted.company || 'Confidencial',
               description: extracted.description,
@@ -206,7 +247,7 @@ export async function POST(request: Request) {
             where: { messageId: item.messageId },
             create: {
               messageId: item.messageId,
-              groupName: item.groupName,
+              groupName: canonicalGroup,
               fullName: extracted.fullName || item.senderName,
               targetRole: extracted.targetRole,
               experienceSummary: extracted.experienceSummary,
@@ -243,15 +284,16 @@ export async function POST(request: Request) {
     // Registra log de sincronização histórica
     await prisma.syncLog.create({
       data: {
-        groupName: groupName || 'Importação Histórica',
+        groupName: canonicalGroup,
         messageType: 'MEMBER_SYNC',
-        summary: `Importação retroativa concluída: ${jobsCreated} vagas e ${candidatesCreated} talentos cadastrados (${rawMessages.length} mensagens analisadas).`,
+        summary: `Importação retroativa no grupo oficial "${canonicalGroup}": ${jobsCreated} vagas e ${candidatesCreated} talentos cadastrados (${rawMessages.length} mensagens analisadas).`,
         success: true,
       },
     });
 
     return NextResponse.json({
       success: true,
+      groupName: canonicalGroup,
       stats: {
         totalAnalyzed: rawMessages.length,
         relevantFound: relevantMessages.length,
@@ -274,10 +316,6 @@ function parseWhatsAppExportedText(text: string, defaultGroupName: string): Pars
   const lines = text.split(/\r?\n/);
   const messages: ParsedMessage[] = [];
 
-  // Padrões de timestamp comuns no Brasil:
-  // 1) 04/09/2026 14:30 - Nome: Mensagem
-  // 2) 04/09/2026, 14:30 - Nome: Mensagem
-  // 3) [04/09/2026, 14:30:15] Nome: Mensagem
   const regexPattern = /^(\[?(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{2,4})[\s,]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?\]?)\s*[-–]?\s*([^:]+):\s*(.*)$/;
 
   let currentMsg: ParsedMessage | null = null;

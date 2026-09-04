@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import {
+  OFFICIAL_GROUP_VAGAS_DEFAULT,
+  OFFICIAL_GROUP_CURRICULOS_DEFAULT,
+} from '@/lib/whatsappGroups';
 
 export async function GET() {
   const evolutionUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
@@ -51,8 +55,8 @@ export async function GET() {
     const totalCandidates = await prisma.candidateProfile.count();
     const totalMembers = await prisma.groupMember.count();
 
-    const groupVagas = process.env.WHATSAPP_GROUP_VAGAS || 'Gestores - Banco de Talentos - VAGAS';
-    const groupCurriculos = process.env.WHATSAPP_GROUP_CURRICULOS || 'Gestores - Banco de Talentos - Currículos';
+    const groupVagas = process.env.WHATSAPP_GROUP_VAGAS || OFFICIAL_GROUP_VAGAS_DEFAULT;
+    const groupCurriculos = process.env.WHATSAPP_GROUP_CURRICULOS || OFFICIAL_GROUP_CURRICULOS_DEFAULT;
 
     return NextResponse.json({
       success: true,
