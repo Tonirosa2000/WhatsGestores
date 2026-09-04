@@ -2,17 +2,46 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
 export async function GET() {
+  const evolutionUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
+  const evolutionKey = process.env.EVOLUTION_API_KEY || 'whatsgestores_secret_key';
+
   try {
     let session = await prisma.whatsAppSession.findUnique({
       where: { id: 'primary' }
     });
 
+    // Consulta status real na Evolution API
+    try {
+      const evoRes = await fetch(`${evolutionUrl}/instance/connectionState/whatsgestores`, {
+        headers: { 'apikey': evolutionKey }
+      });
+      if (evoRes.ok) {
+        const evoData = await evoRes.json();
+        const isConnected = evoData?.instance?.state === 'open';
+        
+        session = await prisma.whatsAppSession.upsert({
+          where: { id: 'primary' },
+          create: {
+            id: 'primary',
+            status: isConnected ? 'CONNECTED' : 'DISCONNECTED',
+            lastActiveAt: new Date()
+          },
+          update: {
+            status: isConnected ? 'CONNECTED' : session?.status || 'DISCONNECTED',
+            lastActiveAt: new Date(),
+            updatedAt: new Date()
+          }
+        });
+      }
+    } catch (evoErr) {
+      console.warn('Evolution API ainda inicializando ou offline:', evoErr);
+    }
+
     if (!session) {
       session = await prisma.whatsAppSession.create({
         data: {
           id: 'primary',
-          status: 'CONNECTED',
-          phoneConnected: '5511998887777',
+          status: 'DISCONNECTED',
           lastActiveAt: new Date()
         }
       });
