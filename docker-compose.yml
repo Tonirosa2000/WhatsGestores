@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 1. WhatsGestores - Aplicação Web Next.js + IA Gemini
   whatsgestores-app:
@@ -26,7 +24,7 @@ services:
 
   # 2. Robô WhatsApp - Evolution API v2 (Conexão 24/7 com grupos)
   evolution-api:
-    image: atendai/evolution-api:v2.1.2
+    image: evolutionapi/evolution-api:v2.2.3
     container_name: evolution-api
     restart: always
     ports:
