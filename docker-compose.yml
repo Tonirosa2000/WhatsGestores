@@ -34,6 +34,7 @@ services:
       - SERVER_URL=${EVOLUTION_PUBLIC_URL:-http://179.199.143.195:8080}
       - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-whatsgestores_secret_key}
       - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
+      - DATABASE_ENABLED=false
       - REDIS_ENABLED=true
       - REDIS_URI=redis://redis:6379
       - CACHE_REDIS_ENABLED=true
