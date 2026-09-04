@@ -1,7 +1,7 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Bot, QrCode, CheckCircle2, RefreshCw, Smartphone, Database, Sparkles, MessageSquare } from 'lucide-react';
+import { Bot, QrCode, CheckCircle2, RefreshCw, Smartphone, Database, Sparkles, MessageSquare, Trash2 } from 'lucide-react';
 import { formatDateTime } from '@/lib/formatters';
 
 interface AdminPanelProps {
@@ -13,6 +13,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const fetchStatus = async () => {
     setLoading(true);
@@ -52,6 +53,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
     }
   };
 
+  const handleClearData = async () => {
+    const confirmed = window.confirm(
+      '⚠️ ATENÇÃO: Tem certeza que deseja apagar todas as vagas, currículos e logs para começar o sistema do zero?'
+    );
+    if (!confirmed) return;
+
+    setClearing(true);
+    try {
+      const res = await fetch('/api/admin/clear-data', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert('✓ Todos os dados foram limpos com sucesso! O sistema está zerado.');
+        window.location.reload();
+      } else {
+        alert('Erro ao limpar dados: ' + data.error);
+      }
+    } catch (e: any) {
+      alert('Erro na requisição: ' + e.message);
+    } finally {
+      setClearing(false);
+    }
+  };
+
   return (
     <div className="space-y-8 animate-fadeIn">
       {/* Banner de Status Geral */}
@@ -71,7 +95,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={fetchStatus}
               disabled={loading}
@@ -86,6 +110,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
             >
               <Sparkles className="w-4 h-4" />
               <span>Testar com IA</span>
+            </button>
+            <button
+              onClick={handleClearData}
+              disabled={clearing}
+              className="flex items-center gap-2 px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl transition-all"
+              title="Zerar banco de dados para iniciar do zero"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>{clearing ? 'Limpando...' : 'Zerar Dados (Começar do Zero)'}</span>
             </button>
           </div>
         </div>
