@@ -24,7 +24,7 @@ services:
 
   # 2. Robô WhatsApp - Evolution API v2 (Conexão 24/7 com grupos)
   evolution-api:
-    image: evolutionapi/evolution-api:v2.2.3
+    image: evoapicloud/evolution-api:latest
     container_name: evolution-api
     restart: always
     ports:
