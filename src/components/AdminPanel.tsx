@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Bot, QrCode, CheckCircle2, RefreshCw, Smartphone, Database, Sparkles, MessageSquare, Trash2, History } from 'lucide-react';
+import { Bot, QrCode, CheckCircle2, RefreshCw, Smartphone, Database, Sparkles, MessageSquare, Trash2, History, Users } from 'lucide-react';
 import { formatDateTime } from '@/lib/formatters';
 import { ImportHistoryModal } from './ImportHistoryModal';
 
@@ -15,6 +15,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [syncingMembers, setSyncingMembers] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
 
   const fetchStatus = async () => {
@@ -78,6 +79,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
     }
   };
 
+  const handleSyncMembers = async () => {
+    setSyncingMembers(true);
+    try {
+      const res = await fetch('/api/whatsapp/sync-members', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert(`✓ Sucesso! ${data.membersSynced} participantes sincronizados de ${data.groupsCount} grupos.`);
+        fetchStatus();
+      } else {
+        alert('Erro ao sincronizar membros: ' + data.error);
+      }
+    } catch (e: any) {
+      alert('Erro na requisição: ' + e.message);
+    } finally {
+      setSyncingMembers(false);
+    }
+  };
+
   return (
     <div className="space-y-8 animate-fadeIn">
       {/* Banner de Status Geral */}
@@ -105,6 +124,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
               title="Atualizar status"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              onClick={handleSyncMembers}
+              disabled={syncingMembers}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-md transition-all"
+              title="Buscar e sincronizar todos os participantes dos grupos de WhatsApp"
+            >
+              <Users className={`w-4 h-4 ${syncingMembers ? 'animate-spin' : ''}`} />
+              <span>{syncingMembers ? 'Sincronizando...' : 'Sincronizar Membros'}</span>
             </button>
             <button
               onClick={() => setIsHistoryModalOpen(true)}
