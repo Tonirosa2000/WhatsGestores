@@ -34,7 +34,9 @@ services:
       - SERVER_URL=${EVOLUTION_PUBLIC_URL:-http://179.199.143.195:8080}
       - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-whatsgestores_secret_key}
       - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
-      - DATABASE_ENABLED=false
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://evolution:evolution_pass@postgres:5432/evolution_db?schema=public
       - REDIS_ENABLED=true
       - REDIS_URI=redis://redis:6379
       - CACHE_REDIS_ENABLED=true
@@ -50,11 +52,26 @@ services:
       - evolution_instances:/evolution/instances
       - evolution_store:/evolution/store
     depends_on:
+      - postgres
       - redis
     networks:
       - whatsgestores-net
 
-  # 3. Cache Redis para controle de sessões e filas
+  # 3. Banco de Dados PostgreSQL dedicado para o Robô Evolution API
+  postgres:
+    image: postgres:15-alpine
+    container_name: whatsgestores-postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=evolution
+      - POSTGRES_PASSWORD=evolution_pass
+      - POSTGRES_DB=evolution_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - whatsgestores-net
+
+  # 4. Cache Redis para controle de sessões e filas
   redis:
     image: redis:7-alpine
     container_name: whatsgestores-redis
@@ -67,6 +84,7 @@ services:
 volumes:
   evolution_instances:
   evolution_store:
+  postgres_data:
   redis_data:
 
 networks:
