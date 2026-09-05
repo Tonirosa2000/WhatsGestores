@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma, ensureDatabaseTables } from '@/lib/prisma';
 
 export async function GET(request: Request) {
   try {
+    await ensureDatabaseTables();
     const { searchParams } = new URL(request.url);
     const search = searchParams.get('search')?.toLowerCase();
     const modality = searchParams.get('modality');

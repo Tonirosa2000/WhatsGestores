@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma, ensureDatabaseTables } from '@/lib/prisma';
 import {
   getOfficialGroupsFromEvolution,
   fetchGroupParticipantsFromEvolution,
@@ -14,8 +14,10 @@ export async function POST() {
   const evolutionKey = process.env.EVOLUTION_API_KEY || 'whatsgestores_secret_key';
 
   try {
-    // 1. Busca os grupos oficiais confirmados (com fallback garantido para os JIDs conhecidos)
-    const officialGroups = await getOfficialGroupsFromEvolution(evolutionUrl, evolutionKey, true);
+    await ensureDatabaseTables();
+
+    // 1. Busca os grupos oficiais confirmados (usando cache / grupos conhecidos para resposta instantânea)
+    const officialGroups = await getOfficialGroupsFromEvolution(evolutionUrl, evolutionKey, false);
 
     if (!officialGroups || officialGroups.length === 0) {
       return NextResponse.json({
@@ -31,6 +33,7 @@ export async function POST() {
     for (const group of officialGroups) {
       const participants = await fetchGroupParticipantsFromEvolution(group.id, evolutionUrl, evolutionKey);
       let countForThisGroup = 0;
+      const dbOperations: any[] = [];
 
       for (const p of participants) {
         const parsed = extractParticipantData(p);
@@ -52,26 +55,35 @@ export async function POST() {
         }
 
         for (const ph of phonesToRegister) {
-          await prisma.groupMember.upsert({
-            where: { phone: ph },
-            create: {
-              phone: ph,
-              name: participantName,
-              groupName: group.canonicalName,
-              isAuthorized: true,
-              lastSeenAt: new Date(),
-            },
-            update: {
-              groupName: group.canonicalName,
-              name: participantName || undefined,
-              isAuthorized: true,
-              lastSeenAt: new Date(),
-            },
-          });
+          dbOperations.push(
+            prisma.groupMember.upsert({
+              where: { phone: ph },
+              create: {
+                phone: ph,
+                name: participantName,
+                groupName: group.canonicalName,
+                isAuthorized: true,
+                lastSeenAt: new Date(),
+              },
+              update: {
+                groupName: group.canonicalName,
+                name: participantName || undefined,
+                isAuthorized: true,
+                lastSeenAt: new Date(),
+              },
+            })
+          );
         }
 
         membersSynced++;
         countForThisGroup++;
+      }
+
+      // Executa gravações em lotes rápidos de 50 no SQLite
+      const CHUNK_SIZE = 50;
+      for (let i = 0; i < dbOperations.length; i += CHUNK_SIZE) {
+        const chunk = dbOperations.slice(i, i + CHUNK_SIZE);
+        await prisma.$transaction(chunk);
       }
 
       groupStats[group.canonicalName] = countForThisGroup;

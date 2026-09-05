@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma, ensureDatabaseTables } from '@/lib/prisma';
 import { maskPhone } from '@/lib/formatters';
 
 export async function GET(request: Request) {
   try {
+    await ensureDatabaseTables();
     const { searchParams } = new URL(request.url);
     const search = searchParams.get('search')?.toLowerCase();
     const isMember = searchParams.get('isMember') === 'true';

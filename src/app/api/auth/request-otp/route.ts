@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma, ensureDatabaseTables } from '@/lib/prisma';
 import {
   getOfficialGroupsFromEvolution,
   fetchGroupParticipantsFromEvolution,
@@ -13,6 +13,7 @@ export async function POST(request: Request) {
   const evolutionKey = process.env.EVOLUTION_API_KEY || 'whatsgestores_secret_key';
 
   try {
+    await ensureDatabaseTables();
     const { phone } = await request.json();
     if (!phone) {
       return NextResponse.json({ success: false, message: 'Telefone é obrigatório' }, { status: 400 });

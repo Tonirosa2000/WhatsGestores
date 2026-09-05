@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma, ensureDatabaseTables } from '@/lib/prisma';
 import {
   OFFICIAL_GROUP_VAGAS_DEFAULT,
   OFFICIAL_GROUP_CURRICULOS_DEFAULT,
@@ -10,6 +10,7 @@ export async function GET() {
   const evolutionKey = process.env.EVOLUTION_API_KEY || 'whatsgestores_secret_key';
 
   try {
+    await ensureDatabaseTables();
     let session = await prisma.whatsAppSession.findUnique({
       where: { id: 'primary' }
     });
