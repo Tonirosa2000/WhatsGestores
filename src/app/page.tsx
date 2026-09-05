@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Navbar } from '@/components/Navbar';
 import { JobCard, JobItem } from '@/components/JobCard';
 import { CandidateCard, CandidateItem } from '@/components/CandidateCard';
+import { CandidateDetailsModal } from '@/components/CandidateDetailsModal';
 import { AdminPanel } from '@/components/AdminPanel';
 import { MemberAuthModal } from '@/components/MemberAuthModal';
 import { NewMessageSimulatorModal } from '@/components/NewMessageSimulatorModal';
@@ -26,6 +27,8 @@ export default function Home() {
   const [authMember, setAuthMember] = useState<{ name: string; phone: string } | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isSimulatorModalOpen, setIsSimulatorModalOpen] = useState(false);
+  const [selectedCandidate, setSelectedCandidate] = useState<CandidateItem | null>(null);
+  const [isCandidateModalOpen, setIsCandidateModalOpen] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('whatsgestores_member');
@@ -320,6 +323,10 @@ export default function Home() {
                     key={cand.id}
                     candidate={cand}
                     onOpenAuthModal={() => setIsAuthModalOpen(true)}
+                    onViewDetails={(c) => {
+                      setSelectedCandidate(c);
+                      setIsCandidateModalOpen(true);
+                    }}
                   />
                 ))}
               </div>
@@ -356,6 +363,16 @@ export default function Home() {
         isOpen={isSimulatorModalOpen}
         onClose={() => setIsSimulatorModalOpen(false)}
         onMessageProcessed={fetchData}
+      />
+
+      <CandidateDetailsModal
+        isOpen={isCandidateModalOpen}
+        candidate={selectedCandidate}
+        onClose={() => setIsCandidateModalOpen(false)}
+        onOpenAuthModal={() => {
+          setIsCandidateModalOpen(false);
+          setIsAuthModalOpen(true);
+        }}
       />
 
       {/* Rodapé Moderno */}

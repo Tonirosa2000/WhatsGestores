@@ -59,6 +59,7 @@ export async function ensureDatabaseTables(): Promise<void> {
           "groupName" TEXT NOT NULL,
           "fullName" TEXT NOT NULL,
           "targetRole" TEXT NOT NULL,
+          "education" TEXT,
           "experienceSummary" TEXT NOT NULL,
           "skills" TEXT,
           "location" TEXT,
@@ -72,6 +73,18 @@ export async function ensureDatabaseTables(): Promise<void> {
           "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
       `);
+
+      // Migração resiliente para bases já existentes
+      try {
+        const tableInfo: any = await prisma.$queryRawUnsafe(`PRAGMA table_info("CandidateProfile");`);
+        const columns = Array.isArray(tableInfo) ? tableInfo : [];
+        const hasEducation = columns.some((col: any) => col?.name === 'education');
+        if (!hasEducation) {
+          await prisma.$executeRawUnsafe(`ALTER TABLE "CandidateProfile" ADD COLUMN "education" TEXT;`);
+        }
+      } catch {
+        // Ignora caso a tabela ainda esteja sendo provisionada
+      }
 
       await prisma.$executeRawUnsafe(`
         CREATE UNIQUE INDEX IF NOT EXISTS "CandidateProfile_messageId_key" ON "CandidateProfile"("messageId");

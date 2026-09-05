@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { extractDataWithGemini, FileAttachmentInput } from '@/lib/gemini';
+import { saveResumeAttachment } from '@/lib/attachmentStorage';
 
 export async function POST(request: Request) {
   try {
@@ -88,17 +89,29 @@ export async function POST(request: Request) {
     }
 
     if (extracted.type === 'CANDIDATE') {
+      let attachmentUrl: string | null = null;
+      if (attachment?.base64Data) {
+        attachmentUrl = await saveResumeAttachment(
+          attachment.base64Data,
+          attachment.fileName,
+          attachment.mimeType,
+          `cv_${messageId}`
+        );
+      }
+
       const candidate = await prisma.candidateProfile.create({
         data: {
           messageId,
           groupName: groupName || 'Gestores - Banco de Talentos - Currículos',
           fullName: extracted.fullName || senderName || 'Candidato Disponível',
           targetRole: extracted.targetRole,
+          education: extracted.education || null,
           experienceSummary: extracted.experienceSummary,
           skills: extracted.skills ? JSON.stringify(extracted.skills) : null,
           location: extracted.location || 'São Paulo - SP',
           contactPhone: extracted.contactPhone || senderPhone || '5511999999999',
           contactEmail: extracted.contactEmail || null,
+          attachmentUrl,
           originalMessage: rawMessage || `[Currículo Anexo]: ${attachment?.fileName || 'Arquivo de Currículo'}`,
           publishedAt: new Date(),
           status: 'ACTIVE',

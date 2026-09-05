@@ -24,6 +24,7 @@ export interface ExtractedCandidateData {
   type: "CANDIDATE";
   fullName: string;
   targetRole: string;
+  education?: string;
   experienceSummary: string;
   skills?: string[];
   location?: string;
@@ -137,10 +138,11 @@ FORMATO PARA "JOB":
 FORMATO PARA "CANDIDATE":
 {
   "type": "CANDIDATE",
-  "fullName": "Nome completo do candidato",
-  "targetRole": "Cargo pretendido ou Área de atuação",
-  "experienceSummary": "Resumo profissional completo com experiências e formação",
-  "skills": ["Competência 1", "Competência 2"],
+  "fullName": "Nome completo real do candidato",
+  "targetRole": "Objetivo profissional ou cargo pretendido (ex: Gerente Financeiro, Coordenador de RH)",
+  "education": "Formação acadêmica detalhada (graduação, pós-graduação, cursos, instituições e ano de conclusão)",
+  "experienceSummary": "Histórico profissional e resumo das experiências anteriores (empresas anteriores, cargos, funções e principais realizações)",
+  "skills": ["Competência 1", "Competência 2", "Competência 3", "Competência 4"],
   "location": "Cidade - UF",
   "contactPhone": "Telefone com DDD",
   "contactEmail": "E-mail se houver"
@@ -222,6 +224,7 @@ function fallbackHeuristicParser(
         type: "CANDIDATE",
         fullName: fileNameClean,
         targetRole: "Profissional Cadastrado",
+        education: "Formação em nível superior / técnico",
         experienceSummary: text || `Currículo recebido através do grupo oficial (${attachment?.fileName || 'Documento'}).`,
         skills: ["Experiência comprovada", "Formação profissional"],
         location: "Brasil",

@@ -41,7 +41,8 @@ model CandidateProfile {
   groupName         String
   fullName          String   // Nome do candidato
   targetRole        String   // Cargo pretendido / Área de atuação
-  experienceSummary String   // Resumo de experiências
+  education         String?  // Formação acadêmica (Graduação, Pós-graduação, Cursos e Instituições)
+  experienceSummary String   // Resumo de experiências anteriores e histórico profissional
   skills            String?  // Habilidades identificadas (JSON string ou separado por vírgula)
   location          String?  // Cidade / Estado
   contactPhone      String   // Telefone WhatsApp (visível só para membros)

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { extractDataWithGemini, FileAttachmentInput } from '@/lib/gemini';
+import { saveResumeAttachment } from '@/lib/attachmentStorage';
 import {
   matchOfficialGroup,
   getOfficialGroupsFromEvolution,
@@ -359,6 +360,16 @@ async function processMessagesWithAI(messages: ParsedMessage[], geminiApiKey?: s
       }
       // 2. Gravação de Talentos / Currículos
       else if (extracted.type === 'CANDIDATE') {
+        let attachmentUrl: string | null = null;
+        if (item.attachment?.base64Data) {
+          attachmentUrl = await saveResumeAttachment(
+            item.attachment.base64Data,
+            item.attachment.fileName,
+            item.attachment.mimeType,
+            `cv_${item.messageId}`
+          );
+        }
+
         await prisma.candidateProfile.upsert({
           where: { messageId: item.messageId },
           create: {
@@ -366,18 +377,26 @@ async function processMessagesWithAI(messages: ParsedMessage[], geminiApiKey?: s
             groupName: item.groupName,
             fullName: extracted.fullName || item.senderName,
             targetRole: extracted.targetRole || 'Profissional Disponível',
+            education: extracted.education || null,
             experienceSummary: extracted.experienceSummary,
             skills: extracted.skills ? JSON.stringify(extracted.skills) : null,
             location: extracted.location || 'Brasil',
             contactPhone: extracted.contactPhone || item.senderPhone || 'Não informado',
             contactEmail: extracted.contactEmail || null,
+            attachmentUrl,
             originalMessage: item.content,
             publishedAt: item.publishedAt,
             status: 'ACTIVE',
           },
           update: {
             fullName: extracted.fullName,
+            targetRole: extracted.targetRole,
+            education: extracted.education || null,
             experienceSummary: extracted.experienceSummary,
+            skills: extracted.skills ? JSON.stringify(extracted.skills) : null,
+            contactPhone: extracted.contactPhone || item.senderPhone,
+            contactEmail: extracted.contactEmail,
+            ...(attachmentUrl ? { attachmentUrl } : {}),
           },
         });
 

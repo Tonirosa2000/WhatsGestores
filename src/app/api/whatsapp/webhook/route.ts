@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { extractDataWithGemini, FileAttachmentInput } from '@/lib/gemini';
+import { saveResumeAttachment } from '@/lib/attachmentStorage';
 import {
   matchOfficialGroup,
   getOfficialGroupsFromEvolution,
@@ -205,6 +206,16 @@ export async function POST(request: Request) {
 
       // 5. Gravação de Currículos / Talentos
       if (extracted.type === 'CANDIDATE') {
+        let attachmentUrl: string | null = null;
+        if (attachment?.base64Data) {
+          attachmentUrl = await saveResumeAttachment(
+            attachment.base64Data,
+            attachment.fileName,
+            attachment.mimeType,
+            `cv_${messageId}`
+          );
+        }
+
         const candidate = await prisma.candidateProfile.upsert({
           where: { messageId },
           create: {
@@ -212,18 +223,26 @@ export async function POST(request: Request) {
             groupName: canonicalGroupName,
             fullName: extracted.fullName || senderName || 'Candidato Disponível',
             targetRole: extracted.targetRole,
+            education: extracted.education || null,
             experienceSummary: extracted.experienceSummary,
             skills: extracted.skills ? JSON.stringify(extracted.skills) : null,
             location: extracted.location || 'Brasil',
             contactPhone: extracted.contactPhone || senderPhone || 'Não informado',
             contactEmail: extracted.contactEmail || null,
+            attachmentUrl,
             originalMessage: rawText || `[Currículo Anexo]: ${attachment?.fileName || 'Arquivo de Currículo'}`,
             publishedAt: new Date(),
             status: 'ACTIVE',
           },
           update: {
             fullName: extracted.fullName,
+            targetRole: extracted.targetRole,
+            education: extracted.education || null,
             experienceSummary: extracted.experienceSummary,
+            skills: extracted.skills ? JSON.stringify(extracted.skills) : null,
+            contactPhone: extracted.contactPhone || senderPhone,
+            contactEmail: extracted.contactEmail,
+            ...(attachmentUrl ? { attachmentUrl } : {}),
           }
         });
 

@@ -15,6 +15,7 @@ export async function GET(request: Request) {
       where.OR = [
         { fullName: { contains: search } },
         { targetRole: { contains: search } },
+        { education: { contains: search } },
         { experienceSummary: { contains: search } },
         { location: { contains: search } },
         { skills: { contains: search } },
@@ -26,18 +27,21 @@ export async function GET(request: Request) {
       orderBy: { publishedAt: 'desc' },
     });
 
-    // Se NÃO for membro verificado, protege os dados de contato (LGPD)
+    // Se NÃO for membro verificado, protege os dados de contato e arquivo original (LGPD)
     const candidates = candidatesRaw.map(c => {
       if (!isMember) {
         return {
           ...c,
           contactPhone: maskPhone(c.contactPhone),
           contactEmail: c.contactEmail ? '•••••@••••.com' : null,
+          hasAttachment: !!c.attachmentUrl,
+          attachmentUrl: null, // Bloqueado para não membros
           isLocked: true,
         };
       }
       return {
         ...c,
+        hasAttachment: !!c.attachmentUrl,
         isLocked: false,
       };
     });
