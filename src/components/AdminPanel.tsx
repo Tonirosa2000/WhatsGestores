@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Bot, QrCode, CheckCircle2, RefreshCw, Smartphone, Database, Sparkles, MessageSquare, Trash2, History, Users } from 'lucide-react';
-import { formatDateTime } from '@/lib/formatters';
+import { formatDateTime, formatNumber } from '@/lib/formatters';
 import { ImportHistoryModal } from './ImportHistoryModal';
 
 interface AdminPanelProps {
@@ -89,9 +89,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal, on
       const data = await res.json();
       if (data.success) {
         const details = data.groupStats 
-          ? Object.entries(data.groupStats).map(([k, v]) => `• ${k}: ${v} membros`).join('\n')
+          ? Object.entries(data.groupStats).map(([k, v]) => `• ${k}: ${formatNumber(Number(v))} membros`).join('\n')
           : '';
-        alert(`✓ Sucesso! ${data.membersSynced} participantes sincronizados exclusivamente dos grupos oficiais:\n\n${details}`);
+        alert(`✓ Sucesso! ${formatNumber(data.membersSynced)} participantes únicos sincronizados exclusivamente dos grupos oficiais:\n\n${details}`);
         fetchStatus();
       } else {
         alert('Erro ao sincronizar membros: ' + data.error);
@@ -216,7 +216,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal, on
           <div className="bg-white/80 p-5 rounded-2xl border border-slate-100 shadow-sm">
             <div className="text-slate-500 text-xs font-bold uppercase mb-2">Vagas Catalogadas</div>
             <div className="text-2xl font-black text-slate-900">
-              {statusData?.stats?.totalJobs || 0}
+              {formatNumber(statusData?.stats?.totalJobs || 0)}
             </div>
             <p className="text-[11px] text-slate-400 mt-1 font-medium">Oportunidades ativas</p>
           </div>
@@ -224,7 +224,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal, on
           <div className="bg-white/80 p-5 rounded-2xl border border-slate-100 shadow-sm">
             <div className="text-slate-500 text-xs font-bold uppercase mb-2">Talentos no Banco</div>
             <div className="text-2xl font-black text-slate-900">
-              {statusData?.stats?.totalCandidates || 0}
+              {formatNumber(statusData?.stats?.totalCandidates || 0)}
             </div>
             <p className="text-[11px] text-slate-400 mt-1 font-medium">Currículos protegidos</p>
           </div>
@@ -232,7 +232,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal, on
           <div className="bg-white/80 p-5 rounded-2xl border border-slate-100 shadow-sm">
             <div className="text-slate-500 text-xs font-bold uppercase mb-2">Membros Verificados</div>
             <div className="text-2xl font-black text-slate-900">
-              {statusData?.stats?.totalMembers || 0}
+              {formatNumber(statusData?.stats?.totalMembers || 0)}
             </div>
             <p className="text-[11px] text-slate-400 mt-1 font-medium">Participantes autorizados</p>
           </div>

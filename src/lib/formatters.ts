@@ -1,6 +1,39 @@
 // Utilitários de Formatação para o Padrão Brasileiro (pt-BR)
 
 /**
+ * Formata um número inteiro para o padrão brasileiro com separador de milhar (.)
+ * Exemplo: 1141 -> "1.141"
+ */
+export function formatNumber(value: number | null | undefined): string {
+  if (value === null || value === undefined || isNaN(value)) {
+    return "0";
+  }
+  return new Intl.NumberFormat("pt-BR").format(value);
+}
+
+/**
+ * Normaliza qualquer número de telefone brasileiro para o padrão canônico oficial de 13 dígitos:
+ * 55 + DDD (2 dígitos) + 9 + 8 dígitos (ex: "5531984137481")
+ */
+export function normalizeToCanonicalPhone(phone: string | null | undefined): string {
+  if (!phone) return "";
+  let cleaned = phone.replace(/\D/g, "");
+  if (!cleaned.startsWith("55") && cleaned.length <= 11) {
+    cleaned = "55" + cleaned;
+  }
+  // Se for celular brasileiro com 12 dígitos (55 + DDD + 8 dígitos onde o 1º dígito é 6, 7, 8 ou 9):
+  // Adiciona o 9º dígito oficial
+  if (cleaned.length === 12 && cleaned.startsWith("55")) {
+    const ddd = cleaned.slice(2, 4);
+    const rest = cleaned.slice(4);
+    if (["6", "7", "8", "9"].includes(rest[0])) {
+      return `55${ddd}9${rest}`;
+    }
+  }
+  return cleaned;
+}
+
+/**
  * Formata um valor numérico para Moeda Brasileira (BRL)
  * Exemplo: 2500 -> "R$ 2.500,00"
  */

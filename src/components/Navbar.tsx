@@ -1,7 +1,8 @@
-﻿'use client';
+'use client';
 
 import React from 'react';
 import { Briefcase, Users, Bot, ShieldCheck, LogOut, MessageSquare, Sparkles } from 'lucide-react';
+import { formatNumber } from '@/lib/formatters';
 
 interface NavbarProps {
   activeTab: 'jobs' | 'candidates' | 'admin';
@@ -64,7 +65,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${
                 activeTab === 'jobs' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
               }`}>
-                {jobsCount}
+                {formatNumber(jobsCount)}
               </span>
             </button>
 
@@ -81,7 +82,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${
                 activeTab === 'candidates' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
               }`}>
-                {candidatesCount}
+                {formatNumber(candidatesCount)}
               </span>
             </button>
 

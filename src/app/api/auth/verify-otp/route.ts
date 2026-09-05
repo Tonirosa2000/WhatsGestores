@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { normalizeToCanonicalPhone } from '@/lib/formatters';
 
 export async function POST(request: Request) {
   try {
@@ -12,6 +13,8 @@ export async function POST(request: Request) {
     if (!cleaned.startsWith('55') && cleaned.length <= 11) {
       cleaned = '55' + cleaned;
     }
+
+    const canonical = normalizeToCanonicalPhone(cleaned);
 
     const otpRecord = await prisma.authOtp.findFirst({
       where: {
@@ -32,7 +35,7 @@ export async function POST(request: Request) {
       data: { used: true }
     });
 
-    const phoneVariants = [cleaned, cleaned.replace(/^55/, '')];
+    const phoneVariants = [cleaned, cleaned.replace(/^55/, ''), canonical, canonical.replace(/^55/, '')];
     if (cleaned.length === 13 && cleaned.startsWith('55')) {
       phoneVariants.push(cleaned.slice(0, 4) + cleaned.slice(5));
       phoneVariants.push(cleaned.slice(2, 4) + cleaned.slice(5));

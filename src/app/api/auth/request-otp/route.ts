@@ -7,6 +7,7 @@ import {
   OFFICIAL_GROUP_VAGAS_DEFAULT,
   OFFICIAL_GROUP_CURRICULOS_DEFAULT,
 } from '@/lib/whatsappGroups';
+import { normalizeToCanonicalPhone } from '@/lib/formatters';
 
 export async function POST(request: Request) {
   const evolutionUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
@@ -24,8 +25,10 @@ export async function POST(request: Request) {
       cleaned = '55' + cleaned;
     }
 
+    const canonical = normalizeToCanonicalPhone(cleaned);
+
     // Gera todas as variações possíveis para busca segura no Brasil
-    const phoneVariantsSet = new Set<string>([cleaned, cleaned.replace(/^55/, '')]);
+    const phoneVariantsSet = new Set<string>([cleaned, cleaned.replace(/^55/, ''), canonical, canonical.replace(/^55/, '')]);
     if (cleaned.length === 13 && cleaned.startsWith('55')) {
       // 55 + DDD + 9 + 8 dígitos -> sem o 9
       phoneVariantsSet.add(cleaned.slice(0, 4) + cleaned.slice(5));
