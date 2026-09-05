@@ -59,7 +59,7 @@ export default function Home() {
 
   useEffect(() => {
     fetchData();
-  }, [searchQuery, modalityFilter, authMember]);
+  }, [searchQuery, modalityFilter, authMember, activeTab]);
 
   const handleAuthSuccess = (member: { name: string; phone: string }) => {
     setAuthMember(member);
@@ -337,7 +337,10 @@ export default function Home() {
 
         {/* 🤖 Aba: Painel do Robô & Admin */}
         {activeTab === 'admin' && (
-          <AdminPanel onOpenSimulatorModal={() => setIsSimulatorModalOpen(true)} />
+          <AdminPanel
+            onOpenSimulatorModal={() => setIsSimulatorModalOpen(true)}
+            onDataChanged={fetchData}
+          />
         )}
 
       </main>

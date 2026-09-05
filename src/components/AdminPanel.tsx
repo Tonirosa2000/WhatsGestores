@@ -7,9 +7,10 @@ import { ImportHistoryModal } from './ImportHistoryModal';
 
 interface AdminPanelProps {
   onOpenSimulatorModal: () => void;
+  onDataChanged?: () => void;
 }
 
-export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) => {
+export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal, onDataChanged }) => {
   const [statusData, setStatusData] = useState<any>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [logs, setLogs] = useState<any[]>([]);
@@ -249,35 +250,65 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
           </h3>
 
           <div className="space-y-3">
-            <div className="p-4 bg-emerald-50/60 border border-emerald-200/60 rounded-2xl flex items-center justify-between">
-              <div>
-                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full uppercase">
-                  Grupo de Vagas
-                </span>
-                <h4 className="text-sm font-bold text-slate-900 mt-1">
-                  Gestores - Banco de Talentos - VAGAS
-                </h4>
-                <p className="text-xs text-slate-500">Escutando novas vagas publicadas</p>
-              </div>
-              <span className="text-xs font-bold text-emerald-700 bg-white px-3 py-1.5 rounded-xl border border-emerald-200">
-                🟢 Ativo
-              </span>
-            </div>
+            {(statusData?.groups || [
+              { name: 'Gestores - Banco de Talentos - VAGAS', type: 'Vagas', status: 'Verificando...' },
+              { name: 'Gestores - Banco de Talentos - Currículo', type: 'Currículos', status: 'Verificando...' },
+            ]).map((grp: any, idx: number) => {
+              const isVagas = grp.type === 'Vagas';
+              const isOk = grp.status === 'Ativo';
+              return (
+                <div
+                  key={idx}
+                  className={`p-4 rounded-2xl border transition-all ${
+                    isOk
+                      ? isVagas
+                        ? 'bg-emerald-50/60 border-emerald-200/60'
+                        : 'bg-teal-50/60 border-teal-200/60'
+                      : 'bg-amber-50/70 border-amber-200/80'
+                  }`}
+                >
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <span
+                        className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${
+                          isOk
+                            ? isVagas
+                              ? 'text-emerald-700 bg-emerald-100'
+                              : 'text-teal-700 bg-teal-100'
+                            : 'text-amber-800 bg-amber-100'
+                        }`}
+                      >
+                        {isVagas ? 'Grupo de Vagas' : 'Grupo de Currículos'}
+                      </span>
+                      <h4 className="text-sm font-bold text-slate-900 mt-1">{grp.name}</h4>
+                      <p className="text-xs text-slate-500">
+                        {isOk
+                          ? isVagas
+                            ? 'Escutando novas vagas publicadas'
+                            : 'Escutando apresentações e perfis de currículos'
+                          : grp.warning || 'Aguardando o robô ser adicionado ou aprovado pelo administrador do grupo.'}
+                      </p>
+                    </div>
 
-            <div className="p-4 bg-teal-50/60 border border-teal-200/60 rounded-2xl flex items-center justify-between">
-              <div>
-                <span className="text-[10px] font-bold text-teal-700 bg-teal-100 px-2.5 py-0.5 rounded-full uppercase">
-                  Grupo de Currículos
-                </span>
-                <h4 className="text-sm font-bold text-slate-900 mt-1">
-                  Gestores - Banco de Talentos - Currículo
-                </h4>
-                <p className="text-xs text-slate-500">Escutando apresentações e perfis</p>
-              </div>
-              <span className="text-xs font-bold text-teal-700 bg-white px-3 py-1.5 rounded-xl border border-teal-200">
-                🟢 Ativo
-              </span>
-            </div>
+                    <span
+                      className={`text-xs font-bold px-3 py-1.5 rounded-xl border shadow-sm ${
+                        isOk
+                          ? 'text-emerald-700 bg-white border-emerald-200'
+                          : 'text-amber-800 bg-white border-amber-200'
+                      }`}
+                    >
+                      {isOk ? '🟢 Ativo no WhatsApp' : '🟡 Aprovação Pendente'}
+                    </span>
+                  </div>
+
+                  {!isOk && (
+                    <div className="mt-2.5 p-2.5 bg-white/80 rounded-xl border border-amber-200/60 text-[11px] text-amber-900 font-medium">
+                      ⚠️ <strong>Atenção:</strong> O número do robô no WhatsApp precisa estar aprovado como participante deste grupo para conseguir ler os currículos e vagas. Verifique no WhatsApp se há solicitação pendente de aprovação de membro.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <div className="mt-6 p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-600 leading-relaxed">
@@ -394,7 +425,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onOpenSimulatorModal }) 
       <ImportHistoryModal
         isOpen={isHistoryModalOpen}
         onClose={() => setIsHistoryModalOpen(false)}
-        onSuccess={fetchStatus}
+        onSuccess={() => {
+          fetchStatus();
+          onDataChanged?.();
+        }}
       />
     </div>
   );

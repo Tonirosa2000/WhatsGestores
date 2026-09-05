@@ -58,13 +58,63 @@ export async function GET() {
     const groupVagas = process.env.WHATSAPP_GROUP_VAGAS || OFFICIAL_GROUP_VAGAS_DEFAULT;
     const groupCurriculos = process.env.WHATSAPP_GROUP_CURRICULOS || OFFICIAL_GROUP_CURRICULOS_DEFAULT;
 
+    // Consulta grupos oficiais reais na Evolution API
+    let officialGroups: any[] = [];
+    let allAvailableGroups: Array<{ id: string; subject: string }> = [];
+
+    try {
+      const evoGroupsRes = await fetch(`${evolutionUrl}/group/fetchAllGroups/whatsgestores?getParticipants=false`, {
+        headers: { 'apikey': evolutionKey },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (evoGroupsRes.ok) {
+        const groupsJson = await evoGroupsRes.json();
+        if (Array.isArray(groupsJson)) {
+          allAvailableGroups = groupsJson.map((g: any) => ({
+            id: g?.id || g?.jid || '',
+            subject: g?.subject || g?.name || 'Sem nome',
+          }));
+        }
+      }
+    } catch (e) {
+      console.warn('Não foi possível listar todos os grupos para status:', e);
+    }
+
+    const { getOfficialGroupsFromEvolution } = await import('@/lib/whatsappGroups');
+    try {
+      officialGroups = await getOfficialGroupsFromEvolution(evolutionUrl, evolutionKey);
+    } catch {}
+
+    const vagasFound = officialGroups.find(g => g.type === 'VAGAS');
+    const curriculosFound = officialGroups.find(g => g.type === 'CURRICULOS');
+
     return NextResponse.json({
       success: true,
       session,
       groups: [
-        { name: groupVagas, type: 'Vagas', status: 'Ativo' },
-        { name: groupCurriculos, type: 'Currículos', status: 'Ativo' },
+        {
+          name: groupVagas,
+          type: 'Vagas',
+          status: vagasFound ? 'Ativo' : 'Não Ingressado / Pendente',
+          isJoined: !!vagasFound,
+          jid: vagasFound?.id || null,
+          participantsCount: vagasFound?.participantsCount,
+          warning: vagasFound ? undefined : 'O robô não está no grupo ou aguarda aprovação de entrada do administrador.',
+        },
+        {
+          name: groupCurriculos,
+          type: 'Currículos',
+          status: curriculosFound ? 'Ativo' : 'Não Ingressado / Pendente',
+          isJoined: !!curriculosFound,
+          jid: curriculosFound?.id || null,
+          participantsCount: curriculosFound?.participantsCount,
+          warning: curriculosFound ? undefined : 'O robô não está no grupo ou aguarda aprovação de entrada do administrador.',
+        },
       ],
+      debug: {
+        totalGroupsOnWhatsApp: allAvailableGroups.length,
+        groupsList: allAvailableGroups,
+      },
       stats: {
         totalJobs,
         totalCandidates,

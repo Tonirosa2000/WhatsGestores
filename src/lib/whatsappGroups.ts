@@ -85,13 +85,13 @@ export function matchOfficialGroup(groupName: string): OfficialGroupMatch {
   return { isOfficial: false, type: null, canonicalName: null };
 }
 
-// Cache em memória dos metadados dos grupos da Evolution API (TTL: 5 minutos)
+// Cache em memória dos metadados dos grupos da Evolution API (TTL: 15 minutos)
 let cachedOfficialGroups: { timestamp: number; data: OfficialGroupInfo[] } | null = null;
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_MS = 15 * 60 * 1000;
 
 /**
  * Busca grupos na Evolution API e filtra ESTRITAMENTE os 2 grupos oficiais,
- * mapeando seus IDs/JIDs reais na nuvem.
+ * mapeando seus IDs/JIDs reais na nuvem com alta resiliência e timeout estendido.
  */
 export async function getOfficialGroupsFromEvolution(
   evolutionUrl: string,
@@ -99,14 +99,14 @@ export async function getOfficialGroupsFromEvolution(
   forceRefresh = false
 ): Promise<OfficialGroupInfo[]> {
   const now = Date.now();
-  if (!forceRefresh && cachedOfficialGroups && (now - cachedOfficialGroups.timestamp < CACHE_TTL_MS)) {
+  if (!forceRefresh && cachedOfficialGroups && cachedOfficialGroups.data.length > 0 && (now - cachedOfficialGroups.timestamp < CACHE_TTL_MS)) {
     return cachedOfficialGroups.data;
   }
 
   try {
     const res = await fetch(`${evolutionUrl}/group/fetchAllGroups/whatsgestores?getParticipants=false`, {
       headers: { apikey: evolutionKey },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(25000), // Timeout expandido para suportar contas com múltiplos grupos
     });
 
     if (!res.ok) {
@@ -135,16 +135,33 @@ export async function getOfficialGroupsFromEvolution(
       }
     }
 
-    cachedOfficialGroups = {
-      timestamp: now,
-      data: matched,
-    };
+    if (matched.length > 0) {
+      cachedOfficialGroups = {
+        timestamp: now,
+        data: matched,
+      };
+      return matched;
+    }
 
-    return matched;
+    return cachedOfficialGroups?.data || [];
   } catch (err) {
-    console.warn('[whatsappGroups] Erro ao buscar grupos na Evolution API:', err);
+    console.warn('[whatsappGroups] Erro ou timeout ao buscar grupos na Evolution API:', err);
+    // Retorna cache anterior se disponível para manter o sistema operacional
     return cachedOfficialGroups?.data || [];
   }
+}
+
+/**
+ * Localiza de forma segura as informações e o JID do grupo oficial específico.
+ */
+export async function resolveOfficialGroup(
+  type: OfficialGroupType,
+  evolutionUrl: string,
+  evolutionKey: string
+): Promise<OfficialGroupInfo | null> {
+  const groups = await getOfficialGroupsFromEvolution(evolutionUrl, evolutionKey);
+  const found = groups.find((g) => g.type === type && !!g.id);
+  return found || null;
 }
 
 /**

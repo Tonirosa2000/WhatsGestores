@@ -11,7 +11,7 @@ interface ImportHistoryModalProps {
 
 export const ImportHistoryModal: React.FC<ImportHistoryModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const [activeTab, setActiveTab] = useState<'API' | 'FILE'>('API');
-  const [groupName, setGroupName] = useState('Gestores - Banco de Talentos - VAGAS');
+  const [groupName, setGroupName] = useState('ALL_OFFICIAL');
   const [limit, setLimit] = useState(50);
   const [fileContent, setFileContent] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
@@ -72,6 +72,11 @@ export const ImportHistoryModal: React.FC<ImportHistoryModalProps> = ({ isOpen, 
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleFinishAndGoHome = () => {
+    onSuccess();
+    onClose();
   };
 
   return (
@@ -142,42 +147,63 @@ export const ImportHistoryModal: React.FC<ImportHistoryModalProps> = ({ isOpen, 
           )}
 
           {result && (
-            <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-3">
-              <div className="flex items-center gap-2 text-emerald-900 font-black text-sm">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                <span>Importação Concluída com Sucesso!</span>
+            <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-4 animate-fadeIn">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-emerald-900 font-black text-sm">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                  <span>Importação Concluída com Sucesso!</span>
+                </div>
+                <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100/80 px-2.5 py-1 rounded-full">
+                  Base Atualizada
+                </span>
               </div>
+
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="p-3 bg-white rounded-xl border border-emerald-100 shadow-sm">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Vagas Cadastradas</span>
-                  <div className="text-xl font-black text-emerald-700">{result.stats?.jobsCreated || 0}</div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Talentos Salvos</span>
+                  <div className="text-2xl font-black text-teal-700">{result.stats?.candidatesCreated || 0}</div>
                 </div>
                 <div className="p-3 bg-white rounded-xl border border-emerald-100 shadow-sm">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Talentos Salvos</span>
-                  <div className="text-xl font-black text-teal-700">{result.stats?.candidatesCreated || 0}</div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Vagas Cadastradas</span>
+                  <div className="text-2xl font-black text-emerald-700">{result.stats?.jobsCreated || 0}</div>
                 </div>
                 <div className="p-3 bg-white rounded-xl border border-emerald-100 shadow-sm">
                   <span className="text-[10px] font-bold text-slate-400 uppercase">Ignoradas/Spam</span>
-                  <div className="text-xl font-black text-slate-600">{result.stats?.ignored || 0}</div>
+                  <div className="text-2xl font-black text-slate-600">{result.stats?.ignored || 0}</div>
                 </div>
               </div>
+
+              {result.stats?.groupSummaries && result.stats.groupSummaries.length > 0 && (
+                <div className="p-3 bg-white/80 rounded-xl border border-emerald-100 text-xs text-slate-600 space-y-1">
+                  <strong className="text-slate-800 block text-[11px] uppercase tracking-wider">Detalhamento por Grupo:</strong>
+                  {result.stats.groupSummaries.map((s: any, idx: number) => (
+                    <div key={idx} className="flex justify-between py-0.5 border-b border-slate-100 last:border-0">
+                      <span className="font-medium text-slate-700">{s.name}</span>
+                      <span className="font-bold text-slate-900">
+                        {s.candidates > 0 ? `${s.candidates} talentos` : `${s.jobs} vagas`} ({s.analyzed} lidas)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
           {/* Seleção de Grupo Oficial */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-700 uppercase">Grupo Oficial do WhatsApp</label>
+            <label className="text-xs font-bold text-slate-700 uppercase">Modo de Varredura dos Grupos</label>
             <select
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
               disabled={loading}
               className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
-              <option value="Gestores - Banco de Talentos - VAGAS">Gestores - Banco de Talentos - VAGAS</option>
-              <option value="Gestores - Banco de Talentos - Currículo">Gestores - Banco de Talentos - Currículo</option>
+              <option value="ALL_OFFICIAL">⭐ Varredura Completa Oficial (1º Currículos ➔ 2º Vagas)</option>
+              <option value="Gestores - Banco de Talentos - Currículo">Apenas Grupo de Currículos & Talentos</option>
+              <option value="Gestores - Banco de Talentos - VAGAS">Apenas Grupo de Vagas de Emprego</option>
             </select>
-            <p className="text-[11px] text-slate-400">
-              O robô busca e processa exclusivamente mensagens do grupo oficial selecionado.
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              No modo oficial completo, o robô abre primeiro o grupo de currículos para capturar talentos e depois o grupo de vagas para capturar oportunidades.
             </p>
           </div>
 
@@ -186,7 +212,7 @@ export const ImportHistoryModal: React.FC<ImportHistoryModalProps> = ({ isOpen, 
             <div className="space-y-4">
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-700 uppercase">
-                  Quantidade de Mensagens Recentes para Ler
+                  Quantidade de Mensagens por Grupo para Ler
                 </label>
                 <div className="grid grid-cols-3 gap-3">
                   {[30, 50, 100].map((num) => (
@@ -208,8 +234,8 @@ export const ImportHistoryModal: React.FC<ImportHistoryModalProps> = ({ isOpen, 
               </div>
 
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-600 leading-relaxed">
-                <strong className="text-slate-900 block mb-1">Como funciona a busca na nuvem:</strong>
-                O robô consulta a Evolution API para resgatar as mensagens anteriores que o WhatsApp sincronizou na nuvem, filtra o que é relevante e envia para a IA do Gemini extrair as oportunidades retroativas.
+                <strong className="text-slate-900 block mb-1">Como funciona a busca automatizada:</strong>
+                O robô conecta exclusivamente ao JID oficial dos grupos no WhatsApp, baixa arquivos anexos (PDFs de currículos) e envia para a IA do Google Gemini estruturar todos os dados em conformidade com o padrão brasileiro.
               </div>
             </div>
           )}
@@ -258,24 +284,40 @@ export const ImportHistoryModal: React.FC<ImportHistoryModalProps> = ({ isOpen, 
             Fechar
           </button>
 
-          <button
-            onClick={handleStartImport}
-            disabled={loading || (activeTab === 'FILE' && !fileContent)}
-            className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-2"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Processando com IA (Aguarde)...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4" />
-                <span>Iniciar Importação com IA</span>
-              </>
-            )}
-          </button>
+          {result ? (
+            <button
+              onClick={handleFinishAndGoHome}
+              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-2 hover:scale-[1.02]"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Concluir e Ver Mural Atualizado</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleStartImport}
+              disabled={loading || (activeTab === 'FILE' && !fileContent)}
+              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-2"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Varrendo Grupos com IA (Aguarde)...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  <span>Iniciar Varredura Oficial com IA</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
+
+      </div>
+    </div>
+  );
+};
+
 
       </div>
     </div>

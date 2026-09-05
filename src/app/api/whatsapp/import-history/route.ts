@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { extractDataWithGemini } from '@/lib/gemini';
+import { extractDataWithGemini, FileAttachmentInput } from '@/lib/gemini';
 import {
   matchOfficialGroup,
   getOfficialGroupsFromEvolution,
+  OfficialGroupType,
   OFFICIAL_GROUP_VAGAS_DEFAULT,
   OFFICIAL_GROUP_CURRICULOS_DEFAULT,
 } from '@/lib/whatsappGroups';
@@ -15,6 +16,8 @@ interface ParsedMessage {
   publishedAt: Date;
   content: string;
   groupName: string;
+  groupType: OfficialGroupType;
+  attachment?: FileAttachmentInput;
 }
 
 // Utilitário para pausar entre chamadas da IA e respeitar a quota
@@ -23,21 +26,10 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { type, fileContent, groupName, limit = 50, geminiApiKey } = body;
+    const { type = 'API', fileContent, groupName, limit = 50, geminiApiKey } = body;
 
-    // 1. Validação estrita do Grupo Informado
-    const match = matchOfficialGroup(groupName || '');
-    if (!match.isOfficial || !match.canonicalName) {
-      return NextResponse.json({
-        success: false,
-        error: `O grupo selecionado não é válido. Escolha "${OFFICIAL_GROUP_VAGAS_DEFAULT}" ou "${OFFICIAL_GROUP_CURRICULOS_DEFAULT}".`,
-      }, { status: 400 });
-    }
-
-    const canonicalGroup = match.canonicalName;
-    const groupType = match.type;
-
-    let rawMessages: ParsedMessage[] = [];
+    const evolutionUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
+    const evolutionKey = process.env.EVOLUTION_API_KEY || 'whatsgestores_secret_key';
 
     // =========================================================================
     // 1. MODO ARQUIVO (.txt exportado do WhatsApp)
@@ -47,35 +39,80 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: false, error: 'Conteúdo do arquivo não fornecido.' }, { status: 400 });
       }
 
-      rawMessages = parseWhatsAppExportedText(fileContent, canonicalGroup);
-    } 
-    // =========================================================================
-    // 2. MODO API (Evolution API v2 na nuvem)
-    // =========================================================================
-    else if (type === 'API') {
-      const evolutionUrl = process.env.EVOLUTION_API_URL || 'http://evolution-api:8080';
-      const evolutionKey = process.env.EVOLUTION_API_KEY || 'whatsgestores_secret_key';
+      const match = matchOfficialGroup(groupName || OFFICIAL_GROUP_CURRICULOS_DEFAULT);
+      const canonicalGroup = match.canonicalName || OFFICIAL_GROUP_CURRICULOS_DEFAULT;
+      const groupType = match.type || 'CURRICULOS';
 
+      const fileMessages = parseWhatsAppExportedText(fileContent, canonicalGroup, groupType);
+      const result = await processMessagesWithAI(fileMessages, geminiApiKey);
+
+      return NextResponse.json({
+        success: true,
+        groupName: canonicalGroup,
+        stats: result.stats,
+        items: result.processedItems,
+      });
+    }
+
+    // =========================================================================
+    // 2. MODO API (Evolution API v2) COM VARREDURA SEQUENCIAL
+    // =========================================================================
+    // Se o usuário selecionou 'ALL_OFFICIAL' ou grupo vazio, executa a sequência completa:
+    // 1º Currículos -> 2º Vagas
+    const isSequentialFull = !groupName || groupName === 'ALL_OFFICIAL';
+
+    const groupsToProcess: Array<{ type: OfficialGroupType; canonicalName: string }> = isSequentialFull
+      ? [
+          { type: 'CURRICULOS', canonicalName: OFFICIAL_GROUP_CURRICULOS_DEFAULT },
+          { type: 'VAGAS', canonicalName: OFFICIAL_GROUP_VAGAS_DEFAULT },
+        ]
+      : (() => {
+          const m = matchOfficialGroup(groupName);
+          if (!m.isOfficial || !m.type || !m.canonicalName) {
+            throw new Error(`Grupo selecionado inválido. Escolha "${OFFICIAL_GROUP_CURRICULOS_DEFAULT}" ou "${OFFICIAL_GROUP_VAGAS_DEFAULT}".`);
+          }
+          return [{ type: m.type, canonicalName: m.canonicalName }];
+        })();
+
+    // Busca grupos oficiais na Evolution API com timeout tolerante
+    const officialGroups = await getOfficialGroupsFromEvolution(evolutionUrl, evolutionKey);
+
+    let totalJobsCreated = 0;
+    let totalCandidatesCreated = 0;
+    let totalIgnored = 0;
+    let totalAnalyzed = 0;
+    const allProcessedItems: any[] = [];
+    const groupSummaries: Array<{ name: string; jobs: number; candidates: number; analyzed: number }> = [];
+
+    for (const target of groupsToProcess) {
+      const groupInfo = officialGroups.find(
+        (g) => g.type === target.type || g.canonicalName === target.canonicalName
+      );
+
+      // BLINDAGEM ESTRITA: Se o grupo não tiver remoteJid confirmado, NUNCA busca para não capturar de outros grupos!
+      if (!groupInfo?.id) {
+        console.warn(`[import-history] Grupo oficial "${target.canonicalName}" não localizado com JID na Evolution API.`);
+        groupSummaries.push({
+          name: target.canonicalName,
+          jobs: 0,
+          candidates: 0,
+          analyzed: 0,
+        });
+        continue;
+      }
+
+      // Busca mensagens estritamente do JID deste grupo
+      const requestBody = {
+        where: {
+          key: {
+            remoteJid: groupInfo.id,
+          },
+        },
+        limit: Number(limit) || 50,
+      };
+
+      let messagesList: any[] = [];
       try {
-        // Localiza o JID do grupo oficial correspondente
-        const officialGroups = await getOfficialGroupsFromEvolution(evolutionUrl, evolutionKey);
-        const targetGroup = officialGroups.find(
-          (g) => g.canonicalName === canonicalGroup || g.type === groupType
-        );
-
-        const requestBody: any = {
-          limit: Number(limit) || 50,
-        };
-
-        if (targetGroup?.id) {
-          requestBody.where = {
-            key: {
-              remoteJid: targetGroup.id,
-            },
-          };
-        }
-
-        // Busca mensagens históricas da instância
         const res = await fetch(`${evolutionUrl}/chat/findMessages/whatsgestores`, {
           method: 'POST',
           headers: {
@@ -83,236 +120,300 @@ export async function POST(request: Request) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(30000),
         });
 
         if (res.ok) {
           const data = await res.json();
-          const messagesList = Array.isArray(data) ? data : data?.messages?.records || data?.records || [];
-
-          rawMessages = messagesList
-            .filter((m: any) => {
-              if (m?.key?.fromMe) return false;
-              // Se tivermos o JID alvo, filtra estritamente
-              if (targetGroup?.id && m?.key?.remoteJid && m.key.remoteJid !== targetGroup.id) {
-                return false;
-              }
-              return true;
-            })
-            .map((m: any) => {
-              const content =
-                m?.message?.conversation ||
-                m?.message?.extendedTextMessage?.text ||
-                m?.message?.imageMessage?.caption ||
-                m?.message?.documentMessage?.caption ||
-                '';
-
-              const timestamp = m?.messageTimestamp ? new Date(m.messageTimestamp * 1000) : new Date();
-              const sender = m?.pushName || m?.key?.participant?.replace(/\D/g, '') || 'Participante';
-
-              return {
-                messageId: m?.key?.id || ('wa_hist_' + Math.random().toString(36).substring(7)),
-                senderName: sender,
-                senderPhone: m?.key?.participant?.replace(/\D/g, '') || undefined,
-                publishedAt: timestamp,
-                content: content.trim(),
-                groupName: canonicalGroup,
-              };
-            })
-            .filter((m: ParsedMessage) => m.content.length > 0);
+          messagesList = Array.isArray(data) ? data : data?.messages?.records || data?.records || [];
         }
-      } catch (err: any) {
-        console.error('Erro ao consultar Evolution API para mensagens históricas:', err);
-      }
-    }
-
-    if (rawMessages.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: `Nenhuma mensagem relevante encontrada no lote do grupo "${canonicalGroup}".`,
-        stats: { total: 0, jobsCreated: 0, candidatesCreated: 0, ignored: 0 },
-      });
-    }
-
-    // =========================================================================
-    // 3. PRÉ-FILTRAGEM INTELIGENTE (Economiza Quota da IA)
-    // =========================================================================
-    const relevantMessages = rawMessages.filter((msg) => {
-      const text = msg.content.toLowerCase();
-      // Descarta mensagens muito curtas ou comuns
-      if (text.length < 15) return false;
-      if (
-        text === 'bom dia' ||
-        text === 'boa tarde' ||
-        text === 'boa noite' ||
-        text === 'obrigado' ||
-        text === 'valeu' ||
-        text.includes('<arquivo de mídia oculto>') ||
-        text.includes('mensagens e chamadas são protegidas')
-      ) {
-        return false;
+      } catch (fetchErr) {
+        console.error(`Erro ao buscar mensagens do grupo ${target.canonicalName}:`, fetchErr);
       }
 
-      // Procura termos de oportunidade ou perfil profissional
-      const hasJobKeywords =
-        text.includes('vaga') ||
-        text.includes('contrat') ||
-        text.includes('oportunidade') ||
-        text.includes('salário') ||
-        text.includes('salario') ||
-        text.includes('requisito') ||
-        text.includes('edital') ||
-        text.includes('processo seletivo') ||
-        text.includes('http://') ||
-        text.includes('https://');
+      // Filtra estritamente pelo JID do grupo oficial correspondente
+      const filteredByGroup = messagesList.filter(
+        (m: any) => !m?.key?.fromMe && m?.key?.remoteJid === groupInfo.id
+      );
 
-      const hasCandidateKeywords =
-        text.includes('currículo') ||
-        text.includes('curriculo') ||
-        text.includes('experiência') ||
-        text.includes('experiencia') ||
-        text.includes('formação') ||
-        text.includes('graduação') ||
-        text.includes('disponível') ||
-        text.includes('cargo pretendido');
+      totalAnalyzed += filteredByGroup.length;
 
-      return hasJobKeywords || hasCandidateKeywords;
-    });
+      // Converte e extrai anexos quando disponíveis
+      const groupMessages: ParsedMessage[] = [];
 
-    let jobsCreated = 0;
-    let candidatesCreated = 0;
-    let ignored = 0;
-    const processedItems: any[] = [];
+      for (const m of filteredByGroup) {
+        const msgContent = m?.message;
+        const docMessage = msgContent?.documentMessage || msgContent?.documentWithCaptionMessage?.message?.documentMessage;
+        const imgMessage = msgContent?.imageMessage;
 
-    // =========================================================================
-    // 4. PROCESSAMENTO SEQUENCIAL COM IA (Respeitando Quota)
-    // =========================================================================
-    for (let i = 0; i < relevantMessages.length; i++) {
-      const item = relevantMessages[i];
-      const hint = groupType === 'CURRICULOS' ? 'CURRICULOS' : 'VAGAS';
+        let content =
+          msgContent?.conversation ||
+          msgContent?.extendedTextMessage?.text ||
+          docMessage?.caption ||
+          imgMessage?.caption ||
+          '';
 
-      try {
-        const extracted = await extractDataWithGemini(
-          item.content,
-          hint,
-          geminiApiKey || process.env.GEMINI_API_KEY
-        );
+        let attachment: FileAttachmentInput | undefined;
 
-        if (extracted.type === 'JOB') {
-          const publishedAt = item.publishedAt;
-          let expiresAt: Date;
-          if (extracted.expiresAt) {
-            const parsed = new Date(extracted.expiresAt);
-            expiresAt = !isNaN(parsed.getTime()) ? parsed : new Date(publishedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+        // Se houver anexo de documento (PDF, DOCX) ou imagem, tenta resgatar base64 da Evolution API
+        if (docMessage || imgMessage) {
+          const fileName = docMessage?.fileName || (imgMessage ? 'foto_anexo.jpg' : 'anexo.pdf');
+          const mimeType = docMessage?.mimetype || imgMessage?.mimetype || 'application/pdf';
+
+          // Se a mensagem já veio com base64
+          if (m?.base64 || docMessage?.base64 || imgMessage?.base64) {
+            attachment = {
+              base64Data: m?.base64 || docMessage?.base64 || imgMessage?.base64,
+              mimeType,
+              fileName,
+            };
           } else {
-            expiresAt = new Date(publishedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+            // Chama endpoint de download de mídia da Evolution API
+            try {
+              const mediaRes = await fetch(`${evolutionUrl}/chat/getBase64FromMediaMessage/whatsgestores`, {
+                method: 'POST',
+                headers: {
+                  'apikey': evolutionKey,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ message: m, convertToMp4: false }),
+                signal: AbortSignal.timeout(15000),
+              });
+
+              if (mediaRes.ok) {
+                const mediaData = await mediaRes.json();
+                const base64 = mediaData?.base64 || mediaData?.data?.base64;
+                if (base64) {
+                  attachment = {
+                    base64Data: base64,
+                    mimeType,
+                    fileName,
+                  };
+                }
+              }
+            } catch (mediaErr) {
+              console.warn(`[import-history] Não foi possível baixar mídia da mensagem ${m?.key?.id}:`, mediaErr);
+            }
           }
 
-          const isExpired = expiresAt.getTime() < Date.now();
-
-          await prisma.jobOpportunity.upsert({
-            where: { messageId: item.messageId },
-            create: {
-              messageId: item.messageId,
-              groupName: canonicalGroup,
-              title: extracted.title,
-              company: extracted.company || 'Confidencial',
-              description: extracted.description,
-              modality: extracted.modality || 'Presencial',
-              location: extracted.location || 'Brasil',
-              salary: extracted.salary || null,
-              salaryFormatted: extracted.salaryFormatted || (extracted.salary ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(extracted.salary) : 'A combinar'),
-              benefits: extracted.benefits || null,
-              requirements: extracted.requirements ? JSON.stringify(extracted.requirements) : null,
-              contactName: extracted.contactName || item.senderName,
-              contactPhone: extracted.contactPhone || item.senderPhone || null,
-              contactEmail: extracted.contactEmail || null,
-              applyUrl: extracted.applyUrl || null,
-              originalMessage: item.content,
-              publishedAt,
-              expiresAt,
-              status: isExpired ? 'EXPIRED' : 'ACTIVE',
-            },
-            update: {
-              title: extracted.title,
-              description: extracted.description,
-              expiresAt,
-              status: isExpired ? 'EXPIRED' : 'ACTIVE',
-            },
-          });
-
-          jobsCreated++;
-          processedItems.push({ type: 'JOB', title: extracted.title, date: publishedAt });
-        } else if (extracted.type === 'CANDIDATE') {
-          await prisma.candidateProfile.upsert({
-            where: { messageId: item.messageId },
-            create: {
-              messageId: item.messageId,
-              groupName: canonicalGroup,
-              fullName: extracted.fullName || item.senderName,
-              targetRole: extracted.targetRole,
-              experienceSummary: extracted.experienceSummary,
-              skills: extracted.skills ? JSON.stringify(extracted.skills) : null,
-              location: extracted.location || 'Brasil',
-              contactPhone: extracted.contactPhone || item.senderPhone || 'Não informado',
-              contactEmail: extracted.contactEmail || null,
-              originalMessage: item.content,
-              publishedAt: item.publishedAt,
-              status: 'ACTIVE',
-            },
-            update: {
-              fullName: extracted.fullName,
-              experienceSummary: extracted.experienceSummary,
-            },
-          });
-
-          candidatesCreated++;
-          processedItems.push({ type: 'CANDIDATE', name: extracted.fullName, date: item.publishedAt });
-        } else {
-          ignored++;
+          if (!content && attachment) {
+            content = `[Arquivo Anexo]: ${fileName}`;
+          }
         }
-      } catch (procErr) {
-        console.error('Erro ao processar mensagem com IA:', procErr);
-        ignored++;
+
+        const timestamp = m?.messageTimestamp ? new Date(m.messageTimestamp * 1000) : new Date();
+        const sender = m?.pushName || m?.key?.participant?.replace(/\D/g, '') || 'Participante';
+
+        if (content.trim().length > 0 || attachment) {
+          groupMessages.push({
+            messageId: m?.key?.id || ('wa_hist_' + Math.random().toString(36).substring(7)),
+            senderName: sender,
+            senderPhone: m?.key?.participant?.replace(/\D/g, '') || undefined,
+            publishedAt: timestamp,
+            content: content.trim(),
+            groupName: target.canonicalName,
+            groupType: target.type,
+            attachment,
+          });
+        }
       }
 
-      // Pausa suave de 1.5s entre chamadas da IA para proteger limites de requisições
-      if (i < relevantMessages.length - 1) {
-        await delay(1500);
-      }
+      // Processa as mensagens desse grupo específico com IA
+      const stepResult = await processMessagesWithAI(groupMessages, geminiApiKey);
+
+      totalJobsCreated += stepResult.stats.jobsCreated;
+      totalCandidatesCreated += stepResult.stats.candidatesCreated;
+      totalIgnored += stepResult.stats.ignored + (filteredByGroup.length - groupMessages.length);
+      allProcessedItems.push(...stepResult.processedItems);
+
+      groupSummaries.push({
+        name: target.canonicalName,
+        jobs: stepResult.stats.jobsCreated,
+        candidates: stepResult.stats.candidatesCreated,
+        analyzed: filteredByGroup.length,
+      });
+
+      // Pausa suave entre grupos
+      await delay(1000);
     }
 
-    // Registra log de sincronização histórica
+    // Registra log geral no banco
+    const summaryText = isSequentialFull
+      ? `Varredura Completa Oficial concluída: ${totalCandidatesCreated} talentos no grupo de Currículos e ${totalJobsCreated} vagas no grupo de Vagas (${totalAnalyzed} mensagens inspecionadas).`
+      : `Varredura no grupo "${groupsToProcess[0]?.canonicalName}" concluída: ${totalJobsCreated} vagas e ${totalCandidatesCreated} talentos cadastrados.`;
+
     await prisma.syncLog.create({
       data: {
-        groupName: canonicalGroup,
+        groupName: isSequentialFull ? 'Varredura Completa Oficial' : groupsToProcess[0]?.canonicalName,
         messageType: 'MEMBER_SYNC',
-        summary: `Importação retroativa no grupo oficial "${canonicalGroup}": ${jobsCreated} vagas e ${candidatesCreated} talentos cadastrados (${rawMessages.length} mensagens analisadas).`,
+        summary: summaryText,
         success: true,
       },
     });
 
     return NextResponse.json({
       success: true,
-      groupName: canonicalGroup,
+      mode: isSequentialFull ? 'SEQUENTIAL_FULL' : 'SINGLE_GROUP',
       stats: {
-        totalAnalyzed: rawMessages.length,
-        relevantFound: relevantMessages.length,
-        jobsCreated,
-        candidatesCreated,
-        ignored: ignored + (rawMessages.length - relevantMessages.length),
+        totalAnalyzed,
+        jobsCreated: totalJobsCreated,
+        candidatesCreated: totalCandidatesCreated,
+        ignored: totalIgnored,
+        groupSummaries,
       },
-      items: processedItems,
+      items: allProcessedItems,
+      message: summaryText,
     });
   } catch (error: any) {
-    console.error('Erro geral na importação histórica:', error);
+    console.error('Erro na importação histórica do WhatsApp:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
 
 // =========================================================================
-// PARSER DE TEXTO EXPORTADO DO WHATSAPP (dd/mm/aaaa, hh:mm - Nome: Mensagem)
+// PROCESSAMENTO SEQUENCIAL COM IA (Respeitando Quota e Regras de Negócio)
 // =========================================================================
-function parseWhatsAppExportedText(text: string, defaultGroupName: string): ParsedMessage[] {
+async function processMessagesWithAI(messages: ParsedMessage[], geminiApiKey?: string) {
+  let jobsCreated = 0;
+  let candidatesCreated = 0;
+  let ignored = 0;
+  const processedItems: any[] = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const item = messages[i];
+    const hint = item.groupType;
+
+    // Pré-filtro inteligente: descarta mensagens triviais que não tenham anexos
+    const textLower = item.content.toLowerCase();
+    const isTrivial =
+      !item.attachment &&
+      (textLower.length < 15 ||
+        textLower === 'bom dia' ||
+        textLower === 'boa tarde' ||
+        textLower === 'boa noite' ||
+        textLower === 'obrigado' ||
+        textLower.includes('youtube.com') ||
+        textLower.includes('youtu.be') ||
+        textLower.includes('tiktok.com') ||
+        textLower.includes('<arquivo de mídia oculto>'));
+
+    if (isTrivial) {
+      ignored++;
+      continue;
+    }
+
+    try {
+      const extracted = await extractDataWithGemini(
+        item.content,
+        hint,
+        geminiApiKey || process.env.GEMINI_API_KEY,
+        item.attachment
+      );
+
+      // 1. Gravação de Vagas (Apenas se confirmada e apropriada)
+      if (extracted.type === 'JOB') {
+        const publishedAt = item.publishedAt;
+        let expiresAt: Date;
+        if (extracted.expiresAt) {
+          const parsed = new Date(extracted.expiresAt);
+          expiresAt = !isNaN(parsed.getTime()) ? parsed : new Date(publishedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+        } else {
+          expiresAt = new Date(publishedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+        }
+
+        const isExpired = expiresAt.getTime() < Date.now();
+
+        await prisma.jobOpportunity.upsert({
+          where: { messageId: item.messageId },
+          create: {
+            messageId: item.messageId,
+            groupName: item.groupName,
+            title: extracted.title,
+            company: extracted.company || 'Confidencial',
+            description: extracted.description,
+            modality: extracted.modality || 'Presencial',
+            location: extracted.location || 'Brasil',
+            salary: extracted.salary || null,
+            salaryFormatted: extracted.salaryFormatted || (extracted.salary ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(extracted.salary) : 'A combinar'),
+            benefits: extracted.benefits || null,
+            requirements: extracted.requirements ? JSON.stringify(extracted.requirements) : null,
+            contactName: extracted.contactName || item.senderName,
+            contactPhone: extracted.contactPhone || item.senderPhone || null,
+            contactEmail: extracted.contactEmail || null,
+            applyUrl: extracted.applyUrl || null,
+            originalMessage: item.content,
+            publishedAt,
+            expiresAt,
+            status: isExpired ? 'EXPIRED' : 'ACTIVE',
+          },
+          update: {
+            title: extracted.title,
+            description: extracted.description,
+            expiresAt,
+            status: isExpired ? 'EXPIRED' : 'ACTIVE',
+          },
+        });
+
+        jobsCreated++;
+        processedItems.push({ type: 'JOB', title: extracted.title, group: item.groupName });
+      }
+      // 2. Gravação de Talentos / Currículos
+      else if (extracted.type === 'CANDIDATE') {
+        await prisma.candidateProfile.upsert({
+          where: { messageId: item.messageId },
+          create: {
+            messageId: item.messageId,
+            groupName: item.groupName,
+            fullName: extracted.fullName || item.senderName,
+            targetRole: extracted.targetRole || 'Profissional Disponível',
+            experienceSummary: extracted.experienceSummary,
+            skills: extracted.skills ? JSON.stringify(extracted.skills) : null,
+            location: extracted.location || 'Brasil',
+            contactPhone: extracted.contactPhone || item.senderPhone || 'Não informado',
+            contactEmail: extracted.contactEmail || null,
+            originalMessage: item.content,
+            publishedAt: item.publishedAt,
+            status: 'ACTIVE',
+          },
+          update: {
+            fullName: extracted.fullName,
+            experienceSummary: extracted.experienceSummary,
+          },
+        });
+
+        candidatesCreated++;
+        processedItems.push({ type: 'CANDIDATE', name: extracted.fullName, group: item.groupName });
+      } else {
+        ignored++;
+      }
+    } catch (procErr) {
+      console.error('Erro ao analisar mensagem com IA:', procErr);
+      ignored++;
+    }
+
+    if (i < messages.length - 1) {
+      await delay(1200);
+    }
+  }
+
+  return {
+    stats: {
+      jobsCreated,
+      candidatesCreated,
+      ignored,
+    },
+    processedItems,
+  };
+}
+
+// =========================================================================
+// PARSER DE TEXTO EXPORTADO DO WHATSAPP (.txt)
+// =========================================================================
+function parseWhatsAppExportedText(
+  text: string,
+  defaultGroupName: string,
+  groupType: OfficialGroupType
+): ParsedMessage[] {
   const lines = text.split(/\r?\n/);
   const messages: ParsedMessage[] = [];
 
@@ -346,9 +447,9 @@ function parseWhatsAppExportedText(text: string, defaultGroupName: string): Pars
         publishedAt: date,
         content: messageText.trim(),
         groupName: defaultGroupName,
+        groupType,
       };
     } else if (currentMsg) {
-      // Linhas seguintes de mensagens com múltiplas linhas
       currentMsg.content += '\n' + line;
     }
   }
