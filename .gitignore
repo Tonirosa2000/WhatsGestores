@@ -29,7 +29,8 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Prisma SQLite temporary journal files
+# Prisma SQLite database and temporary journal files
+prisma/*.db*
 prisma/*-journal
 prisma/*.tmp*
 *.tsbuildinfo
