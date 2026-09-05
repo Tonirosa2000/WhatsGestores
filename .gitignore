@@ -32,3 +32,4 @@ Thumbs.db
 # Prisma SQLite temporary journal files
 prisma/*-journal
 prisma/*.tmp*
+*.tsbuildinfo

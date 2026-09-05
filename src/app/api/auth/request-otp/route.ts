@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import {
-  matchOfficialGroup,
+  getOfficialGroupsFromEvolution,
+  fetchGroupParticipantsFromEvolution,
+  extractParticipantData,
   OFFICIAL_GROUP_VAGAS_DEFAULT,
   OFFICIAL_GROUP_CURRICULOS_DEFAULT,
 } from '@/lib/whatsappGroups';
@@ -21,100 +23,111 @@ export async function POST(request: Request) {
       cleaned = '55' + cleaned;
     }
 
-    // Variação com ou sem o 9º dígito (para DDDs brasileiros)
-    const phoneVariants = [cleaned, cleaned.replace(/^55/, '')];
+    // Gera todas as variações possíveis para busca segura no Brasil
+    const phoneVariantsSet = new Set<string>([cleaned, cleaned.replace(/^55/, '')]);
     if (cleaned.length === 13 && cleaned.startsWith('55')) {
-      // 55 + DDD + 9 + 8 dígitos -> varia para sem o 9
-      phoneVariants.push(cleaned.slice(0, 4) + cleaned.slice(5));
-      phoneVariants.push(cleaned.slice(2, 4) + cleaned.slice(5));
+      // 55 + DDD + 9 + 8 dígitos -> sem o 9
+      phoneVariantsSet.add(cleaned.slice(0, 4) + cleaned.slice(5));
+      phoneVariantsSet.add(cleaned.slice(2, 4) + cleaned.slice(5));
     } else if (cleaned.length === 12 && cleaned.startsWith('55')) {
-      // 55 + DDD + 8 dígitos -> varia para com o 9
-      phoneVariants.push(cleaned.slice(0, 4) + '9' + cleaned.slice(4));
-      phoneVariants.push(cleaned.slice(2, 4) + '9' + cleaned.slice(4));
+      // 55 + DDD + 8 dígitos -> com o 9
+      phoneVariantsSet.add(cleaned.slice(0, 4) + '9' + cleaned.slice(4));
+      phoneVariantsSet.add(cleaned.slice(2, 4) + '9' + cleaned.slice(4));
     }
 
-    // 1. Verifica no banco local de membros (APENAS se estiver associado a um grupo oficial)
+    const allVariants = Array.from(phoneVariantsSet);
+
+    // Identificação de Administrador do Sistema / Gestor dos Grupos
+    const adminPhonesEnv = process.env.ADMIN_PHONES || '';
+    const defaultAdminPhones = ['5531984137481', '553184137481', '31984137481', '3184137481'];
+    const allowedAdminPhones = [
+      ...defaultAdminPhones,
+      ...adminPhonesEnv.split(',').map((p) => p.trim().replace(/\D/g, '')).filter(Boolean),
+    ];
+
+    const isAdminPhone = allVariants.some((v) => allowedAdminPhones.includes(v));
+
+    // 1. Verifica no banco local de membros autorizados
     let member = await prisma.groupMember.findFirst({
       where: {
-        AND: [
-          {
-            OR: phoneVariants.map((p) => ({ phone: p })),
-          },
-          {
-            OR: [
-              { groupName: OFFICIAL_GROUP_VAGAS_DEFAULT },
-              { groupName: OFFICIAL_GROUP_CURRICULOS_DEFAULT },
-              { groupName: 'Gestores - Banco de Talentos - Currículos' },
-            ],
-          },
-        ],
+        phone: { in: allVariants },
+        isAuthorized: true,
       },
     });
 
-    // 2. Se não achou no banco local, consulta os grupos em tempo real na Evolution API (FILTRANDO APENAS OS OFICIAIS)
+    // 2. Se não achou no banco local, consulta diretamente os grupos oficiais em tempo real na Evolution API
     if (!member) {
       try {
-        const groupsRes = await fetch(`${evolutionUrl}/group/fetchAllGroups/whatsgestores?getParticipants=true`, {
-          headers: { 'apikey': evolutionKey },
-          signal: AbortSignal.timeout(10000),
-        });
+        const officialGroups = await getOfficialGroupsFromEvolution(evolutionUrl, evolutionKey);
+        for (const group of officialGroups) {
+          const participants = await fetchGroupParticipantsFromEvolution(group.id, evolutionUrl, evolutionKey);
 
-        if (groupsRes.ok) {
-          const groups = await groupsRes.json();
-          if (Array.isArray(groups)) {
-            for (const group of groups) {
-              const subject = group?.subject || group?.name || '';
-              const match = matchOfficialGroup(subject);
+          for (const p of participants) {
+            const parsed = extractParticipantData(p);
+            if (!parsed) continue;
 
-              // IGNORA qualquer grupo que não seja um dos 2 oficiais
-              if (!match.isOfficial || !match.canonicalName) {
-                continue;
-              }
+            const matches = allVariants.some((v) => parsed.phone.endsWith(v) || v.endsWith(parsed.phone));
+            if (matches) {
+              const participantName = parsed.name || (isAdminPhone ? 'Toni Rosa (Administrador)' : null);
 
-              const participants = group?.participants || [];
-              const found = participants.find((p: any) => {
-                const pPhone = (p?.id || p?.jid || '').replace(/@.*$/, '').replace(/\D/g, '');
-                return phoneVariants.some((v) => pPhone.endsWith(v) || v.endsWith(pPhone));
+              // Cadastra como membro verificado no banco
+              member = await prisma.groupMember.upsert({
+                where: { phone: cleaned },
+                create: {
+                  phone: cleaned,
+                  name: participantName,
+                  groupName: group.canonicalName,
+                  isAuthorized: true,
+                  lastSeenAt: new Date(),
+                },
+                update: {
+                  groupName: group.canonicalName,
+                  name: participantName || undefined,
+                  isAuthorized: true,
+                  lastSeenAt: new Date(),
+                },
               });
-
-              if (found) {
-                // Cadastra como membro verificado do grupo oficial correspondente
-                member = await prisma.groupMember.upsert({
-                  where: { phone: cleaned },
-                  create: {
-                    phone: cleaned,
-                    name: found?.pushName || found?.name || null,
-                    groupName: match.canonicalName,
-                    isAuthorized: true,
-                    lastSeenAt: new Date(),
-                  },
-                  update: {
-                    groupName: match.canonicalName,
-                    name: found?.pushName || found?.name || undefined,
-                    lastSeenAt: new Date(),
-                  },
-                });
-                break;
-              }
+              break;
             }
           }
+
+          if (member) break;
         }
       } catch (evoErr) {
-        console.warn('Erro ao consultar grupos na Evolution API para verificação de membro:', evoErr);
+        console.warn('[request-otp] Erro ao consultar grupos na Evolution API:', evoErr);
       }
     }
 
-    // 3. Se não for membro de nenhum dos grupos oficiais
+    // 3. Se for administrador conhecido mas ainda não constava na base, autoriza automaticamente
+    if (!member && isAdminPhone) {
+      member = await prisma.groupMember.upsert({
+        where: { phone: cleaned },
+        create: {
+          phone: cleaned,
+          name: 'Toni Rosa (Administrador)',
+          groupName: OFFICIAL_GROUP_VAGAS_DEFAULT,
+          isAuthorized: true,
+          lastSeenAt: new Date(),
+        },
+        update: {
+          groupName: OFFICIAL_GROUP_VAGAS_DEFAULT,
+          isAuthorized: true,
+          lastSeenAt: new Date(),
+        },
+      });
+    }
+
+    // 4. Se realmente não for membro dos grupos oficiais
     if (!member) {
       return NextResponse.json({
         success: false,
         isMember: false,
         message: 'Este número não foi localizado nos grupos oficiais de Gestores (Vagas e Currículo). Para visualizar o Banco de Talentos e currículos completos, ingresse nos nossos grupos oficiais!',
-        inviteGroupUrl: 'https://chat.whatsapp.com/exemplo-grupo-gestores',
+        inviteGroupUrl: 'https://chat.whatsapp.com/120363425890387747',
       }, { status: 403 });
     }
 
-    // 4. Gera código OTP de 6 dígitos
+    // 5. Gera código OTP de 6 dígitos
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
 
@@ -126,7 +139,7 @@ export async function POST(request: Request) {
       },
     });
 
-    // 5. Envia o código OTP diretamente no WhatsApp do usuário pelo robô
+    // 6. Envia o código OTP via WhatsApp
     try {
       await fetch(`${evolutionUrl}/message/sendText/whatsgestores`, {
         method: 'POST',
@@ -147,7 +160,7 @@ export async function POST(request: Request) {
       data: {
         groupName: member.groupName,
         messageType: 'MEMBER_AUTH',
-        summary: `Código OTP enviado para ${member.name || cleaned} via WhatsApp (${member.groupName}).`,
+        summary: `Código OTP gerado para ${member.name || cleaned} (${member.groupName}).`,
         success: true,
       },
     });
@@ -160,6 +173,7 @@ export async function POST(request: Request) {
       phoneMasked: cleaned.replace(/(\d{4})(\d{4})$/, '••••-$2'),
     });
   } catch (error: any) {
+    console.error('Erro em request-otp:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

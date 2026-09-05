@@ -317,9 +317,3 @@ export const ImportHistoryModal: React.FC<ImportHistoryModalProps> = ({ isOpen, 
     </div>
   );
 };
-
-
-      </div>
-    </div>
-  );
-};

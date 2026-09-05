@@ -32,13 +32,20 @@ export async function POST(request: Request) {
       data: { used: true }
     });
 
+    const phoneVariants = [cleaned, cleaned.replace(/^55/, '')];
+    if (cleaned.length === 13 && cleaned.startsWith('55')) {
+      phoneVariants.push(cleaned.slice(0, 4) + cleaned.slice(5));
+      phoneVariants.push(cleaned.slice(2, 4) + cleaned.slice(5));
+    } else if (cleaned.length === 12 && cleaned.startsWith('55')) {
+      phoneVariants.push(cleaned.slice(0, 4) + '9' + cleaned.slice(4));
+      phoneVariants.push(cleaned.slice(2, 4) + '9' + cleaned.slice(4));
+    }
+
     const member = await prisma.groupMember.findFirst({
       where: {
-        OR: [
-          { phone: cleaned },
-          { phone: cleaned.replace(/^55/, '') },
-        ]
-      }
+        phone: { in: phoneVariants },
+        isAuthorized: true,
+      },
     });
 
     return NextResponse.json({

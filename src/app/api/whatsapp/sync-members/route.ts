@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import {
-  matchOfficialGroup,
+  getOfficialGroupsFromEvolution,
+  fetchGroupParticipantsFromEvolution,
+  extractParticipantData,
   invalidateOfficialGroupsCache,
   OFFICIAL_GROUP_VAGAS_DEFAULT,
   OFFICIAL_GROUP_CURRICULOS_DEFAULT,
@@ -12,132 +14,117 @@ export async function POST() {
   const evolutionKey = process.env.EVOLUTION_API_KEY || 'whatsgestores_secret_key';
 
   try {
-    // 1. Busca todos os grupos e seus participantes na Evolution API
-    const res = await fetch(`${evolutionUrl}/group/fetchAllGroups/whatsgestores?getParticipants=true`, {
-      headers: { 'apikey': evolutionKey },
-      signal: AbortSignal.timeout(15000),
-    });
+    // 1. Busca os grupos oficiais confirmados (com fallback garantido para os JIDs conhecidos)
+    const officialGroups = await getOfficialGroupsFromEvolution(evolutionUrl, evolutionKey, true);
 
-    if (!res.ok) {
+    if (!officialGroups || officialGroups.length === 0) {
       return NextResponse.json({
         success: false,
-        error: 'Não foi possível consultar os grupos na Evolution API. Verifique se o WhatsApp está conectado.',
-      }, { status: 400 });
-    }
-
-    const allGroups = await res.json();
-    if (!Array.isArray(allGroups)) {
-      return NextResponse.json({
-        success: false,
-        error: 'Nenhum grupo retornado pela Evolution API.',
-      }, { status: 400 });
-    }
-
-    // 2. Filtra ESTRITAMENTE os 2 grupos oficiais
-    const matchedOfficialGroups: Array<{
-      group: any;
-      canonicalName: string;
-      type: 'VAGAS' | 'CURRICULOS';
-      originalSubject: string;
-    }> = [];
-
-    for (const group of allGroups) {
-      const subject = group?.subject || group?.name || '';
-      const match = matchOfficialGroup(subject);
-      if (match.isOfficial && match.type && match.canonicalName) {
-        matchedOfficialGroups.push({
-          group,
-          canonicalName: match.canonicalName,
-          type: match.type,
-          originalSubject: subject,
-        });
-      }
-    }
-
-    if (matchedOfficialGroups.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: `Nenhum dos grupos oficiais foi localizado na sua conta do WhatsApp. Certifique-se de que a conta participa de "${OFFICIAL_GROUP_VAGAS_DEFAULT}" e/ou "${OFFICIAL_GROUP_CURRICULOS_DEFAULT}".`,
-        totalGroupsInspected: allGroups.length,
+        error: `Nenhum dos grupos oficiais foi localizado na conta do WhatsApp conectada. Certifique-se de que o robô participa de "${OFFICIAL_GROUP_VAGAS_DEFAULT}" e/ou "${OFFICIAL_GROUP_CURRICULOS_DEFAULT}".`,
       }, { status: 404 });
     }
-
-    // 3. Remove membros de grupos não oficiais da base para evitar contaminação
-    await prisma.groupMember.deleteMany({
-      where: {
-        NOT: [
-          { groupName: OFFICIAL_GROUP_VAGAS_DEFAULT },
-          { groupName: OFFICIAL_GROUP_CURRICULOS_DEFAULT },
-          { groupName: 'Gestores - Banco de Talentos - Currículos' },
-        ],
-      },
-    });
 
     let membersSynced = 0;
     const groupStats: Record<string, number> = {};
 
-    // 4. Sincroniza participantes apenas dos grupos oficiais identificados
-    for (const item of matchedOfficialGroups) {
-      const participants = item.group?.participants || [];
+    // 2. Busca participantes especificamente de cada um dos grupos oficiais
+    for (const group of officialGroups) {
+      const participants = await fetchGroupParticipantsFromEvolution(group.id, evolutionUrl, evolutionKey);
       let countForThisGroup = 0;
 
       for (const p of participants) {
-        const rawId = p?.id || p?.jid || '';
-        let phone = rawId.replace(/@.*$/, '').replace(/\D/g, '');
+        const parsed = extractParticipantData(p);
+        if (!parsed) continue;
 
-        if (phone && phone.length >= 8) {
-          if (!phone.startsWith('55') && phone.length <= 11) {
-            phone = '55' + phone;
-          }
+        const phone = parsed.phone;
+        const participantName = parsed.name;
 
+        // Gera variantes brasileiras para garantir localização (com/sem 55 e com/sem 9º dígito)
+        const phonesToRegister = new Set<string>([phone]);
+        if (phone.length === 13 && phone.startsWith('55')) {
+          phonesToRegister.add(phone.slice(0, 4) + phone.slice(5)); // sem 9
+          phonesToRegister.add(phone.slice(2)); // sem 55
+          phonesToRegister.add(phone.slice(2, 4) + phone.slice(5)); // sem 55 e sem 9
+        } else if (phone.length === 12 && phone.startsWith('55')) {
+          phonesToRegister.add(phone.slice(0, 4) + '9' + phone.slice(4)); // com 9
+          phonesToRegister.add(phone.slice(2)); // sem 55
+          phonesToRegister.add(phone.slice(2, 4) + '9' + phone.slice(4)); // sem 55 e com 9
+        }
+
+        for (const ph of phonesToRegister) {
           await prisma.groupMember.upsert({
-            where: { phone },
+            where: { phone: ph },
             create: {
-              phone,
-              name: p?.pushName || p?.name || null,
-              groupName: item.canonicalName,
+              phone: ph,
+              name: participantName,
+              groupName: group.canonicalName,
               isAuthorized: true,
               lastSeenAt: new Date(),
             },
             update: {
-              groupName: item.canonicalName,
-              name: p?.pushName || p?.name || undefined,
+              groupName: group.canonicalName,
+              name: participantName || undefined,
+              isAuthorized: true,
               lastSeenAt: new Date(),
             },
           });
-
-          membersSynced++;
-          countForThisGroup++;
         }
+
+        membersSynced++;
+        countForThisGroup++;
       }
 
-      groupStats[item.canonicalName] = (groupStats[item.canonicalName] || 0) + countForThisGroup;
+      groupStats[group.canonicalName] = countForThisGroup;
+    }
+
+    // 3. Garante que os telefones de administradores estejam autorizados e registrados
+    const adminPhonesEnv = process.env.ADMIN_PHONES || '';
+    const defaultAdminPhones = ['5531984137481', '553184137481', '31984137481', '3184137481'];
+    const allAdminPhones = [
+      ...defaultAdminPhones,
+      ...adminPhonesEnv.split(',').map((p) => p.trim().replace(/\D/g, '')).filter(Boolean),
+    ];
+
+    for (const adminPhone of allAdminPhones) {
+      await prisma.groupMember.upsert({
+        where: { phone: adminPhone },
+        create: {
+          phone: adminPhone,
+          name: 'Toni Rosa (Administrador)',
+          groupName: OFFICIAL_GROUP_VAGAS_DEFAULT,
+          isAuthorized: true,
+          lastSeenAt: new Date(),
+        },
+        update: {
+          isAuthorized: true,
+          lastSeenAt: new Date(),
+        },
+      });
     }
 
     // Invalida cache de grupos
     invalidateOfficialGroupsCache();
 
-    // 5. Registra log de auditoria detalhado
+    // 4. Registra log de auditoria detalhado
     const summaryDetails = Object.entries(groupStats)
-      .map(([name, count]) => `${name}: ${count} membros`)
+      .map(([name, count]) => `${name}: ${count} participantes`)
       .join(' | ');
 
     await prisma.syncLog.create({
       data: {
         groupName: 'Sincronização de Membros Oficiais',
         messageType: 'MEMBER_SYNC',
-        summary: `Sincronização restrita aos grupos oficiais concluída: ${membersSynced} participantes no total (${summaryDetails}). Foram inspecionados ${allGroups.length} grupos no total e filtrados apenas os 2 oficiais.`,
+        summary: `Sincronização concluída com sucesso: ${membersSynced} participantes cadastrados (${summaryDetails}).`,
         success: true,
       },
     });
 
     return NextResponse.json({
       success: true,
-      groupsCount: matchedOfficialGroups.length,
-      totalGroupsInspected: allGroups.length,
+      groupsCount: officialGroups.length,
       membersSynced,
       groupStats,
-      message: `${membersSynced} membros sincronizados com sucesso exclusivamente dos grupos oficiais (${matchedOfficialGroups.map(g => g.canonicalName).join(', ')})!`,
+      message: `${membersSynced} participantes sincronizados com sucesso dos grupos oficiais (${officialGroups.map((g) => g.canonicalName).join(', ')})!`,
     });
   } catch (error: any) {
     console.error('Erro ao sincronizar membros oficiais:', error);
